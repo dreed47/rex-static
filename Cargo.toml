@@ -1,0 +1,21 @@
+[package]
+name = "rex-static"
+version = "0.1.0"
+edition = "2024"
+description = "Glitchy talking-head assistant for your Linux desktop"
+license = "MIT"
+
+[dependencies]
+macroquad = "0.4"
+whisper-rs = "0.16"
+rusqlite = { version = "0.42", features = ["bundled"] }
+ureq = { version = "3", features = ["json"] }
+serde_json = "1"
+rand = "0.9"
+
+[profile.release]
+opt-level = 3
+
+# Local patch: left-click asks the compositor to move the window (xdg_toplevel.move).
+[patch.crates-io]
+miniquad = { path = "vendor/miniquad" }

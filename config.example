@@ -1,0 +1,37 @@
+# Rex Static settings: ~/.config/rex-static/config
+# One "key = value" per line; "#" starts a comment. Every key is optional.
+# The file must be yours and not writable by others, or it's ignored.
+
+# male (Rex Static, Ryan voice) or female (Roxy Static, Lessac voice)
+persona = male
+
+# Your name, so the persona can use it. Leave out to stay generic.
+# user_name = Sam
+
+# Claude model the persona thinks with. Haiku is fast and cheap; Sonnet or
+# Opus answer better but slower and cost more. See
+# the models page in the Anthropic docs for ids.
+# model = claude-haiku-5-5
+
+# auto: the persona's built-in head (put rex.png or roxy.png in
+#       ~/.local/share/rex-static to use your own image instead)
+# plastic: procedural mannequin, no image
+# photo: ~/.local/share/rex-static/face.png
+# face = auto
+
+# Piper program (default ~/.local/bin/piper, from setup.sh)
+# piper = ~/.local/bin/piper
+
+# Optional tool: let the persona ask Claude Code about your files.
+# Absolute path to the claude program. Asks your yes before each use.
+# claude_code = /usr/bin/claude
+
+# Optional tool: Home Assistant. Reads freely; asks your yes before changes.
+# ha_url = https://homeassistant.local:8123
+# Token file holds a long-lived access token (keep it mode 600).
+# ha_token_file = ~/.config/ha-token
+# For a self-signed certificate, pin its public key instead of trusting a CA:
+#   openssl s_client -connect homeassistant.local:8123 </dev/null 2>/dev/null \
+#     | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
+#     | openssl dgst -sha256 -binary | base64
+# ha_pin = sha256//<that output>
