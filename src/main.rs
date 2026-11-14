@@ -440,6 +440,9 @@ fn draw_caption(text: &str, progress: f32, color: Color) {
     }
 }
 
+/// Target frame time.
+const FRAME: Duration = Duration::from_millis(16);
+
 fn conf() -> Conf {
     Conf {
         window_title: config::get().persona.default_name().into(),
@@ -455,6 +458,10 @@ fn conf() -> Conf {
             // Resize limits in logical px: 450 and 1400 screen pixels at 1.6 scale.
             wayland_min_size: Some((282, 282)),
             wayland_max_size: Some((875, 875)),
+            // No vsync: with it, eglSwapBuffers blocks while the window is
+            // hidden (another workspace), Wayland pings go unanswered and
+            // Hyprland shows "not responding". The main loop paces frames.
+            swap_interval: Some(0),
             ..Default::default()
         },
         ..Default::default()
@@ -576,6 +583,7 @@ async fn run() {
     let mut glitch = 0.0f32;
     let start = Instant::now();
 
+    let mut frame_start = Instant::now();
     loop {
         let t = start.elapsed().as_secs_f32();
         let dt = get_frame_time();
@@ -765,6 +773,12 @@ async fn run() {
             _ => {}
         }
 
+        // About 60 fps, since vsync is off (see `conf`).
+        let spent = frame_start.elapsed();
+        if spent < FRAME {
+            thread::sleep(FRAME - spent);
+        }
+        frame_start = Instant::now();
         next_frame().await;
     }
     cancel.store(true, Ordering::SeqCst);
