@@ -7,6 +7,7 @@
 //! write to it.
 
 use crate::persona::Persona;
+use crate::mqtt::MqttConf;
 use crate::tools::HaConf;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -32,6 +33,8 @@ pub struct Config {
     pub piper: PathBuf,
     pub claude_code: Option<PathBuf>,
     pub ha: Option<HaConf>,
+    /// Home Assistant announcements over MQTT.
+    pub mqtt: Option<MqttConf>,
 }
 
 /// The config, read once on first use.
@@ -160,8 +163,10 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
         piper: home.join(".local/bin/piper"),
         claude_code: None,
         ha: None,
+        mqtt: None,
     };
     let (mut ha_url, mut ha_pin, mut ha_token) = (None, None, home.join(".config/ha-token"));
+    let (mut mqtt_url, mut mqtt_user) = (None, None);
     for (n, raw) in text.lines().enumerate() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -219,10 +224,22 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
                 Some(p) => ha_token = p,
                 None => bad("needs an absolute path"),
             },
+            "mqtt_url" => match mqtt_origin(value) {
+                Some(hp) => mqtt_url = Some(hp),
+                None => bad("needs mqtt://host or mqtt://host:port, nothing after it"),
+            },
+            "mqtt_user" => {
+                if is_mqtt_user(value) {
+                    mqtt_user = Some(value.to_string());
+                } else {
+                    bad("use 64 visible characters at most, no spaces");
+                }
+            }
             _ => bad("unknown key"),
         }
     }
     cfg.ha = ha_url.map(|url| HaConf { url, pin: ha_pin, token_file: ha_token });
+    cfg.mqtt = mqtt_url.map(|(host, port)| MqttConf { host, port, user: mqtt_user });
     (cfg, problems)
 }
 
@@ -245,9 +262,10 @@ fn abs_path(v: &str, home: &Path) -> Option<PathBuf> {
     (p.is_absolute() && !p.components().any(|c| c == std::path::Component::ParentDir)).then_some(p)
 }
 
-/// `https://host[:port]`, with an optional trailing slash dropped.
-fn https_origin(v: &str) -> Option<String> {
-    let rest = v.strip_prefix("https://")?.trim_end_matches('/');
+/// `host[:port]` after the scheme, with an optional trailing slash
+/// dropped: the host and the port, if one is given.
+fn host_port(rest: &str) -> Option<(&str, Option<u16>)> {
+    let rest = rest.trim_end_matches('/');
     let (host, port) = match rest.split_once(':') {
         Some((h, p)) => (h, Some(p)),
         None => (rest, None),
@@ -256,8 +274,30 @@ fn https_origin(v: &str) -> Option<String> {
         && host.len() <= 253
         && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
         && !host.starts_with(['.', '-']);
-    let port_ok = port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.parse::<u16>().is_ok_and(|n| n > 0));
-    (host_ok && port_ok).then(|| format!("https://{rest}"))
+    let port = match port {
+        None => None,
+        Some(p) if !p.is_empty() && p.len() <= 5 => Some(p.parse::<u16>().ok().filter(|&n| n > 0)?),
+        Some(_) => return None,
+    };
+    host_ok.then_some((host, port))
+}
+
+/// `https://host[:port]`, with an optional trailing slash dropped.
+fn https_origin(v: &str) -> Option<String> {
+    let rest = v.strip_prefix("https://")?;
+    host_port(rest)?;
+    Some(format!("https://{}", rest.trim_end_matches('/')))
+}
+
+/// `mqtt://host[:port]`: the host and port (1883 when none is given).
+fn mqtt_origin(v: &str) -> Option<(String, u16)> {
+    let (host, port) = host_port(v.strip_prefix("mqtt://")?)?;
+    Some((host.to_string(), port.unwrap_or(1883)))
+}
+
+/// A broker user name: 1 to 64 visible characters.
+fn is_mqtt_user(v: &str) -> bool {
+    !v.is_empty() && v.chars().count() <= 64 && v.chars().all(|c| !c.is_control() && !c.is_whitespace())
 }
 
 /// A Claude model id: `claude-` then lowercase letters, digits, `-` or `.`.
@@ -326,7 +366,9 @@ piper = ~/bin/piper\n\
 claude_code = /opt/claude/claude\n\
 ha_url = https://ha.local:8123/\n\
 ha_pin = sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n\
-ha_token_file = ~/.secret/ha\n";
+ha_token_file = ~/.secret/ha\n\
+mqtt_url = mqtt://broker.local\n\
+mqtt_user = mqtt-user\n";
         let (c, p) = parse(text, &home());
         assert!(p.is_empty(), "{p:?}");
         assert_eq!(c.persona, Persona::Female);
@@ -339,6 +381,8 @@ ha_token_file = ~/.secret/ha\n";
         assert_eq!(ha.url, "https://ha.local:8123");
         assert!(ha.pin.is_some());
         assert_eq!(ha.token_file, PathBuf::from("/home/test/.secret/ha"));
+        let m = c.mqtt.unwrap();
+        assert_eq!((m.host.as_str(), m.port, m.user.as_deref()), ("broker.local", 1883, Some("mqtt-user")));
     }
 
     #[test]
@@ -351,9 +395,12 @@ ha_pin = abc\n\
 piper = ../piper\n\
 nonsense\n\
 colour = red\n\
-model = gpt-5\n";
+model = gpt-5\n\
+mqtt_url = tcp://broker\n\
+mqtt_user = two words\n";
         let (c, p) = parse(text, &home());
-        assert_eq!(p.len(), 9, "{p:?}");
+        assert_eq!(p.len(), 11, "{p:?}");
+        assert!(c.mqtt.is_none());
         assert_eq!(c.model, "claude-haiku-5-5");
         assert_eq!(c.persona, Persona::Male);
         assert!(c.user_name.is_none() && c.claude_code.is_none() && c.ha.is_none());
@@ -381,6 +428,18 @@ model = gpt-5\n";
     }
 
     #[test]
+    fn mqtt_urls() {
+        assert_eq!(mqtt_origin("mqtt://192.168.86.120:1883"), Some(("192.168.86.120".into(), 1883)));
+        assert_eq!(mqtt_origin("mqtt://broker/"), Some(("broker".into(), 1883)));
+        assert_eq!(mqtt_origin("mqtt://broker:8883"), Some(("broker".into(), 8883)));
+        for bad in ["mqtts://broker", "mqtt://", "mqtt://broker/x", "mqtt://u@broker", "mqtt://broker:0", "broker"] {
+            assert!(mqtt_origin(bad).is_none(), "{bad}");
+        }
+        let (c, _) = parse("mqtt_user = someone", &home());
+        assert!(c.mqtt.is_none(), "a user without a url is off");
+    }
+
+    #[test]
     fn pin_without_url_is_off() {
         let (c, _) = parse("ha_pin = sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", &home());
         assert!(c.ha.is_none());
@@ -391,7 +450,7 @@ model = gpt-5\n";
         let (c, p) = parse(include_str!("../config.example"), &home());
         assert!(p.is_empty(), "{p:?}");
         assert_eq!(c.persona, Persona::Male);
-        assert!(c.claude_code.is_none() && c.ha.is_none());
+        assert!(c.claude_code.is_none() && c.ha.is_none() && c.mqtt.is_none());
     }
 
     #[test]

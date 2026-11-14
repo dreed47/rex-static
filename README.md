@@ -56,6 +56,7 @@ The file is `~/.config/rex-static/config`. See
 | `face` | `auto` (built-in head), `plastic` or `photo` |
 | `claude_code` | Path to `claude`; turns on the Claude Code tool |
 | `ha_url`, `ha_pin`, `ha_token_file` | Turn on the Home Assistant tool |
+| `mqtt_url`, `mqtt_user` | Turn on Home Assistant announcements |
 
 The app ignores the file if someone else owns it or others can write to it.
 
@@ -67,6 +68,41 @@ needed. Haiku is fast and cheap. Sonnet and Opus give better answers but are
 slower and cost more. A value that isn't a `claude-...` id is ignored with a
 warning, and the default is used. Newer models get the newer web search tool
 automatically.
+
+## Home Assistant announcements
+
+Home Assistant automations can make the persona speak, for example
+"The coffee pot is off." The app connects out to your MQTT broker. Nothing
+listens on your machine.
+
+1. Set `mqtt_url` (and `mqtt_user`, if your broker needs a login) in the
+   config.
+2. Store the broker password in the keyring:
+
+   ```sh
+   secret-tool store --label='Rex Static MQTT' service rex-static key mqtt
+   ```
+
+3. Restart the app. Home Assistant finds a **Rex Static** device through MQTT
+   discovery, with a `notify.rex_static` entity and a connectivity sensor.
+4. In an automation, call `notify.send_message` on `notify.rex_static` with
+   the text to speak.
+
+How messages are handled:
+
+- Text is spoken as sent, without Claude rewording it, and isn't added to
+  the conversation history.
+- If the persona is talking, the announcement waits its turn.
+- If the app is closed, the message is dropped.
+- Messages older than 2 minutes are dropped, so a backlog isn't read out
+  after your machine wakes from sleep.
+- Text over 500 characters is cut.
+
+Other senders publish JSON to `rex-static/say`, with `ts` in Unix seconds:
+
+```json
+{"text": "The coffee pot is off.", "ts": 1800000000}
+```
 
 ## Tuning in code
 

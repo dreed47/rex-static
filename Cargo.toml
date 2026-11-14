@@ -6,6 +6,7 @@ description = "Glitchy talking-head assistant for your Linux desktop"
 license = "MIT"
 
 [dependencies]
+rumqttc = { version = "0.25", default-features = false }
 macroquad = "0.4"
 whisper-rs = "0.16"
 rusqlite = { version = "0.42", features = ["bundled"] }

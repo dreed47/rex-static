@@ -35,3 +35,11 @@ persona = male
 #     | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
 #     | openssl dgst -sha256 -binary | base64
 # ha_pin = sha256//<that output>
+
+# Optional: Home Assistant announcements over MQTT. The persona shows up in
+# Home Assistant as notify.rex_static (MQTT discovery) and reads out what
+# automations send. Plain mqtt:// only (no TLS); port 1883 when left out.
+# mqtt_url = mqtt://192.168.1.10:1883
+# mqtt_user = mqtt-user
+# The password lives in the keyring, not here:
+#   secret-tool store --label='Rex Static MQTT' service rex-static key mqtt

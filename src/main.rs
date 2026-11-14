@@ -9,6 +9,7 @@ mod head;
 mod llm;
 mod mannequin;
 mod memory;
+mod mqtt;
 mod persona;
 mod stt;
 mod tools;
@@ -46,6 +47,9 @@ struct Shared {
 enum Job {
     Hear(Vec<i16>),
     Say(String),
+    /// Read out as is (from Home Assistant). Waits for current speech and
+    /// stays out of the chat memory.
+    Announce(String),
 }
 
 /// Most characters you can type in one message.
@@ -213,6 +217,12 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
 
     for job in rx {
         rex.cancel.store(false, Ordering::SeqCst);
+        if let Job::Announce(text) = job {
+            rex.set(|s| s.heard.clear());
+            rex.say(&text);
+            rex.set(|s| s.phase = Phase::Idle);
+            continue;
+        }
         rex.set(|s| {
             s.phase = Phase::Thinking;
             s.caption.clear();
@@ -220,6 +230,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         });
         let text = match job {
             Job::Say(t) => t,
+            Job::Announce(_) => unreachable!("handled above"),
             Job::Hear(pcm) => match stt.transcribe(&pcm) {
                 Ok(t) => t,
                 Err(e) => {
@@ -531,6 +542,18 @@ async fn run() {
             },
         };
         thread::spawn(move || worker(rex, rx));
+    }
+    if let Some(conf) = config::get().mqtt.clone() {
+        let (atx, arx) = mpsc::channel();
+        thread::spawn(move || mqtt::run(conf, atx));
+        let tx = tx.clone();
+        thread::spawn(move || {
+            for text in arx {
+                if tx.send(Job::Announce(text)).is_err() {
+                    break;
+                }
+            }
+        });
     }
 
     let rt = render_target(200, 200);
