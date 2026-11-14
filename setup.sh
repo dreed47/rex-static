@@ -54,8 +54,27 @@ if [[ ! -e $conf ]]; then
 fi
 
 cargo build --release
+
+# Install the program and an app launcher entry.
+bin="$HOME/.local/bin/rex-static"
+icon="$HOME/.local/share/icons/rex-static.png"
+desktop="$HOME/.local/share/applications/rex-static.desktop"
+mkdir -p "$(dirname "$bin")" "$(dirname "$icon")" "$(dirname "$desktop")"
+install -m 755 target/release/rex-static "$bin"
+install -m 644 assets/rex.png "$icon"
+cat > "$desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Rex Static
+Comment=Glitchy talking-head assistant
+Exec=$bin
+Icon=$icon
+Terminal=false
+Categories=Utility;
+StartupWMClass=rex-static
+DESKTOP
 echo
-echo "Done. Run ./target/release/rex-static"
+echo "Done. Open Rex Static from your app launcher, or run $bin"
 if [[ -z ${ANTHROPIC_API_KEY:-} ]] && ! /usr/bin/secret-tool lookup service rex-static key anthropic >/dev/null 2>&1; then
   echo "No Anthropic key yet. Store one with:"
   echo "  secret-tool store --label='Rex Static' service rex-static key anthropic"

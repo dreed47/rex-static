@@ -52,11 +52,79 @@ fn home() -> PathBuf {
 }
 
 pub fn path() -> PathBuf {
+    if cfg!(test) {
+        return crate::memory::data_dir().join("config");
+    }
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| home().join(".config"));
     base.join("rex-static").join("config")
+}
+
+/// Set `persona` in the config file, keeping every other line. Writes a
+/// temp file next to it and renames it over, so a crash can't leave half a
+/// config. Refuses a file the app would ignore anyway.
+pub fn save_persona(p: Persona) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let path = path();
+    let old = match std::fs::metadata(&path) {
+        Ok(meta) => {
+            let me = std::fs::metadata("/proc/self").map(|m| m.uid()).ok();
+            if Some(meta.uid()) != me || meta.mode() & 0o022 != 0 {
+                return Err(format!("{} isn't safely yours; not changing it", path.display()));
+            }
+            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?
+        }
+        Err(_) => String::new(),
+    };
+    let dir = path.parent().ok_or("config path has no folder")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let tmp = dir.join(".config.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    f.write_all(with_persona(&old, p).as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename to {}: {e}", path.display()))
+}
+
+/// Config text with the `persona` line set to `p`. Replaces the first
+/// active `persona` line (keeping its comment), drops any later ones, or
+/// appends one.
+pub fn with_persona(text: &str, p: Persona) -> String {
+    let mut out = String::new();
+    let mut done = false;
+    for raw in text.lines() {
+        let (body, comment) = match raw.find('#') {
+            Some(i) => (&raw[..i], &raw[i..]),
+            None => (raw, ""),
+        };
+        let is_persona = body.split_once('=').is_some_and(|(k, _)| k.trim() == "persona");
+        if !is_persona {
+            out.push_str(raw);
+        } else if done {
+            continue;
+        } else {
+            done = true;
+            out.push_str(&format!("persona = {}", p.tag()));
+            if !comment.is_empty() {
+                out.push_str("  ");
+                out.push_str(comment);
+            }
+        }
+        out.push('\n');
+    }
+    if !done {
+        out.push_str(&format!("persona = {}\n", p.tag()));
+    }
+    out
 }
 
 /// Read and parse the file. A missing file means all defaults.
@@ -215,6 +283,24 @@ mod tests {
 
     fn home() -> PathBuf {
         PathBuf::from("/home/test")
+    }
+
+    #[test]
+    fn persona_rewrite_keeps_other_lines() {
+        let text = "# my config\nuser_name = Sam\npersona = male   # pick one\n# persona = female\nface = auto\n";
+        let out = with_persona(text, Persona::Female);
+        assert_eq!(
+            out,
+            "# my config\nuser_name = Sam\npersona = female  # pick one\n# persona = female\nface = auto\n"
+        );
+        assert_eq!(parse(&out, &home()).0.persona, Persona::Female);
+        assert_eq!(with_persona("", Persona::Female), "persona = female\n");
+        assert_eq!(with_persona("persona = male\npersona = male\n", Persona::Female), "persona = female\n");
+    }
+
+    #[test]
+    fn test_config_path_is_temp() {
+        assert!(path().starts_with(std::env::temp_dir()));
     }
 
     #[test]

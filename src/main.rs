@@ -176,7 +176,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
     };
     let claude = llm::load_key().map(|k| llm::Claude::new(k, config::get().model.clone()));
     let cfg = config::get();
-    let tools = Arc::new(tools::Tools::new(rex.cancel.clone(), cfg.claude_code.clone(), cfg.ha.clone()));
+    let tools = Arc::new(tools::Tools::new(rex.cancel.clone(), cfg.claude_code.clone(), cfg.ha.clone(), cfg.persona));
     let notes_busy = Arc::new(AtomicBool::new(false));
     let key = cfg.persona.name_key();
     let mut who = persona::Who {
@@ -329,9 +329,31 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
                 rex.say(&pick(persona::ERRORS));
             }
         }
+        if tools.take_switch().is_some() {
+            restart();
+        }
         rex.set(|s| s.phase = Phase::Idle);
         maybe_update_notes(claude, &notes_busy, &who);
     }
+}
+
+/// Replace this process with a fresh copy of the program, so a new persona
+/// loads from the config. The instance lock is close-on-exec, so it frees
+/// itself and the new copy takes it.
+fn restart() {
+    use std::os::unix::process::CommandExt;
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return eprintln!("rex-static: restart: {e}"),
+    };
+    // If setup.sh replaced the binary while this copy ran, the link reads
+    // "<path> (deleted)"; the new file sits at the original path.
+    let exe = match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(s) => PathBuf::from(s),
+        None => exe,
+    };
+    let err = std::process::Command::new(&exe).args(std::env::args_os().skip(1)).exec();
+    eprintln!("rex-static: restart {}: {err}", exe.display());
 }
 
 const VERT: &str = r#"#version 100
@@ -439,8 +461,47 @@ fn conf() -> Conf {
     }
 }
 
-#[macroquad::main(conf)]
-async fn main() {
+/// Holds an exclusive lock on a file in the data folder for the life of the
+/// process. A second launch finds it taken, focuses the open window and exits.
+fn single_instance() -> Option<std::fs::File> {
+    let dir = memory::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("instance.lock"))
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Can't open lock file ({e}); starting anyway.");
+            return None;
+        }
+    };
+    match file.try_lock() {
+        Ok(()) => Some(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            eprintln!("Rex Static is already running.");
+            let _ = std::process::Command::new("/usr/bin/hyprctl")
+                .args(["dispatch", "focuswindow", "class:^rex-static$"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Can't lock {} ({e:?}); starting anyway.", dir.display());
+            None
+        }
+    }
+}
+
+fn main() {
+    let _lock = single_instance();
+    macroquad::Window::from_config(conf(), run());
+}
+
+async fn run() {
     let shared = Arc::new(Mutex::new(Shared {
         phase: Phase::Booting,
         caption: "Starting up...".into(),

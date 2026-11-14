@@ -7,6 +7,7 @@
 //! prompt: the exact call must have been proposed on the previous turn and
 //! the user's latest message must be a plain yes.
 
+use crate::persona::Persona;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -95,11 +96,27 @@ said yes to this exact action: propose it first.",
     ]
 }
 
+fn switch_def() -> Value {
+    json!({
+        "name": "switch_persona",
+        "description": "Switch to the other persona when the user asks: male is Rex Static, female \
+is Roxy Static. The app saves the choice and restarts as that persona after your reply.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "persona": { "type": "string", "enum": ["male", "female"] }
+            },
+            "required": ["persona"]
+        }
+    })
+}
+
 /// Short line for the window while a tool runs.
 pub fn label(name: &str) -> &'static str {
     match name {
         "ask_claude_code" => "Asking Claude Code...",
         "ha_states" | "ha_call_service" => "Checking Home Assistant...",
+        "switch_persona" => "Switching...",
         _ => "Checking...",
     }
 }
@@ -142,6 +159,9 @@ pub struct Tools {
     cancel: Arc<AtomicBool>,
     claude: Option<PathBuf>,
     ha: Option<HaConf>,
+    current: Persona,
+    /// Persona to restart as, set by switch_persona.
+    switch: Mutex<Option<Persona>>,
 }
 
 /// Per-turn view: what was pending when the turn began, and what the user said.
@@ -152,8 +172,13 @@ pub struct Turn<'a> {
 }
 
 impl Tools {
-    pub fn new(cancel: Arc<AtomicBool>, claude: Option<PathBuf>, ha: Option<HaConf>) -> Self {
-        Self { pending: Mutex::new(None), cancel, claude, ha }
+    pub fn new(cancel: Arc<AtomicBool>, claude: Option<PathBuf>, ha: Option<HaConf>, current: Persona) -> Self {
+        Self { pending: Mutex::new(None), cancel, claude, ha, current, switch: Mutex::new(None) }
+    }
+
+    /// The persona switch_persona asked for, if any. Clears it.
+    pub fn take_switch(&self) -> Option<Persona> {
+        self.switch.lock().ok().and_then(|mut s| s.take())
     }
 
     /// Which optional tools are set up.
@@ -163,7 +188,7 @@ impl Tools {
 
     /// Definitions for the tools that are set up.
     pub fn defs(&self) -> Vec<Value> {
-        let mut v = Vec::new();
+        let mut v = vec![switch_def()];
         if self.claude.is_some() {
             v.push(claude_def());
         }
@@ -190,6 +215,7 @@ impl Turn<'_> {
         let set_up = match name {
             "ask_claude_code" => self.tools.claude.is_some(),
             "ha_states" | "ha_call_service" => self.tools.ha.is_some(),
+            "switch_persona" => true,
             _ => false,
         };
         if !set_up {
@@ -210,6 +236,7 @@ want to do and ask if that's okay. If they say yes, call this tool again with ex
             "ask_claude_code" => self.claude_code(input),
             "ha_states" => self.ha_states(input),
             "ha_call_service" => self.ha_call(input),
+            "switch_persona" => self.switch_to(input),
             _ => Err(format!("unknown tool {name}")),
         };
         match r {
@@ -219,6 +246,25 @@ want to do and ask if that's okay. If they say yes, call this tool again with ex
                 (format!("Failed: {}", clip(&e, 500)), true)
             }
         }
+    }
+
+    fn switch_to(&self, input: &Value) -> Result<String, String> {
+        let to = match input["persona"].as_str() {
+            Some("male") => Persona::Male,
+            Some("female") => Persona::Female,
+            _ => return Err("persona must be male or female".into()),
+        };
+        if to == self.tools.current {
+            return Ok(format!("Already {}. Nothing to switch.", to.tag()));
+        }
+        crate::config::save_persona(to)?;
+        if let Ok(mut s) = self.tools.switch.lock() {
+            *s = Some(to);
+        }
+        Ok(format!(
+            "Saved. The app restarts as {} after your reply. Say a one-line goodbye.",
+            to.default_name()
+        ))
     }
 
     fn claude_code(&self, input: &Value) -> Result<String, String> {
@@ -461,20 +507,37 @@ mod tests {
     #[test]
     fn only_set_up_tools_exist() {
         let c = Arc::new(AtomicBool::new(false));
-        let none = Tools::new(c.clone(), None, None);
-        assert!(none.defs().is_empty());
+        let none = Tools::new(c.clone(), None, None, Persona::Male);
+        let names: Vec<_> = none.defs().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
+        assert_eq!(names, ["switch_persona"]);
         let (msg, err) = none.turn("yes").run("ha_states", &json!({"search": ""}));
         assert!(err && msg.contains("not available"));
         let (_, err) = none.turn("yes").run("ask_claude_code", &json!({"task": "x"}));
         assert!(err);
-        let ha = Tools::new(c.clone(), None, Some(test_ha()));
+        let ha = Tools::new(c.clone(), None, Some(test_ha()), Persona::Male);
         let names: Vec<_> = ha.defs().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
-        assert_eq!(names, ["ha_states", "ha_call_service"]);
-        let both = Tools::new(c, Some("/nonexistent/claude".into()), Some(test_ha()));
-        assert_eq!(both.defs().len(), 3);
+        assert_eq!(names, ["switch_persona", "ha_states", "ha_call_service"]);
+        let both = Tools::new(c, Some("/nonexistent/claude".into()), Some(test_ha()), Persona::Male);
+        assert_eq!(both.defs().len(), 4);
         for d in both.defs() {
             assert!(!d.to_string().contains("Sam"));
         }
+    }
+
+    #[test]
+    fn switch_persona_saves_and_queues() {
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, None, Persona::Male);
+        let (msg, err) = tools.turn("hi").run("switch_persona", &json!({"persona": "male"}));
+        assert!(!err && msg.contains("Already"));
+        assert_eq!(tools.take_switch(), None);
+        let (_, err) = tools.turn("hi").run("switch_persona", &json!({"persona": "robot"}));
+        assert!(err);
+        let (msg, err) = tools.turn("hi").run("switch_persona", &json!({"persona": "female"}));
+        assert!(!err, "{msg}");
+        assert_eq!(tools.take_switch(), Some(Persona::Female));
+        assert_eq!(tools.take_switch(), None);
+        let saved = std::fs::read_to_string(crate::config::path()).unwrap();
+        assert!(saved.contains("persona = female"));
     }
 
     #[test]
@@ -501,7 +564,7 @@ mod tests {
 
     #[test]
     fn pending_lasts_one_turn() {
-        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()));
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male);
         let call = json!({"domain": "light", "service": "turn_on", "entity_id": "light.x"});
         // Turn 1: not confirmed, gets parked. Never reaches the network.
         let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
@@ -515,7 +578,7 @@ mod tests {
 
     #[test]
     fn service_validation_blocks_before_network() {
-        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()));
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male);
         let t = Turn { tools: &tools, prev: None, user_text: String::new() };
         let bad = [
             json!({"domain": "hassio", "service": "host_shutdown", "entity_id": "a.b"}),

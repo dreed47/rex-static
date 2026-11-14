@@ -13,6 +13,13 @@ pub enum Persona {
 }
 
 impl Persona {
+    pub fn other(self) -> Self {
+        match self {
+            Self::Male => Self::Female,
+            Self::Female => Self::Male,
+        }
+    }
+
     pub fn default_name(self) -> &'static str {
         match self {
             Self::Male => "Rex Static",
@@ -168,7 +175,16 @@ pub fn system_prompt(who: &Who, notes: &str) -> String {
     let name = &who.name;
     let u = who.u();
     let uc = cap(u);
-    let mut tools = vec!["Web search for current facts, news and anything you're unsure of.".to_string()];
+    let other = who.persona.other();
+    let mut tools = vec![
+        "Web search for current facts, news and anything you're unsure of.".to_string(),
+        format!(
+            "switch_persona when {u} asks for the {} voice or for {}: it restarts the app as them, \
+so call it, then say a one-line goodbye.",
+            other.tag(),
+            other.default_name()
+        ),
+    ];
     let mut gated = Vec::new();
     if who.tools.home_assistant {
         tools.push(format!("Home Assistant (ha_states to read, ha_call_service to control) for {u}'s house."));

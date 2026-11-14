@@ -5,7 +5,10 @@ your Linux desktop. Hold the space bar to talk, or type. Answers come from
 Claude and are spoken with a local Piper voice.
 
 Two personas: **Rex Static** (male) and **Roxy Static** (female). Pick one
-in the config file.
+in the config file, or ask the persona to switch (for example "switch to
+Roxy"). It saves the choice to the config and restarts as the other one.
+
+![Rex Static and Roxy Static](docs/screenshot.png)
 
 ## Requirements
 
@@ -31,7 +34,14 @@ sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang
    ```
 
    Or set `ANTHROPIC_API_KEY` instead.
-3. Run `./target/release/rex-static`.
+3. Open **Rex Static** from your app launcher, or run `~/.local/bin/rex-static`.
+
+`setup.sh` installs the program to `~/.local/bin/rex-static` and adds a
+launcher entry. After changing code, run `./setup.sh` again to reinstall
+(downloads are skipped when the files are already there).
+
+Only one copy runs at a time. Opening it again brings the open window to
+the front (on Hyprland).
 
 ## Config
 
