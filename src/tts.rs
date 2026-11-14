@@ -9,8 +9,6 @@ pub const RATE: u32 = 22_050;
 /// Envelope and glitch-flag frames per second (drives the mouth).
 pub const FPS: f32 = 30.0;
 const MAX_TTS_BYTES: usize = RATE as usize * 2 * 120;
-/// Piper length scale before the pitch shift: the overall speaking pace.
-const PACE: f32 = 0.774;
 
 /// A Piper binary, a voice model, and a pitch.
 #[derive(Clone)]
@@ -20,6 +18,10 @@ pub struct Voice {
     /// Playback-speed factor applied to Piper's output. Below 1 lowers pitch
     /// (deeper voice) and slows speech, so Piper speaks faster to make up for it.
     pub pitch: f32,
+    /// Piper length scale.
+    pub pace: f32,
+    /// Stutter, warble and crunch the audio.
+    pub retro: bool,
 }
 
 /// Speak-ready text: one line, no markdown symbols.
@@ -42,7 +44,7 @@ pub fn synth(voice: &Voice, text: &str) -> Result<Vec<i16>, String> {
     let mut child = Command::new(&voice.piper)
         .arg("-m")
         .arg(&voice.model)
-        .args(["--output-raw", "--length-scale", &(PACE * voice.pitch).to_string(), "--sentence-silence", "0.05"])
+        .args(["--output-raw", "--length-scale", &voice.pace.to_string(), "--sentence-silence", "0.05"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -107,10 +109,14 @@ fn rms(x: &[f32]) -> f32 {
     (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt()
 }
 
-/// Stutters, pitch jumps, dropouts and a bitcrush.
-pub fn glitchify<R: Rng>(input: &[i16], text: &str, pitch: f32, rng: &mut R) -> Clip {
+/// Stutters, pitch jumps, dropouts and a bitcrush when `retro`; otherwise
+/// the audio stays clean and only the mouth envelope is worked out.
+pub fn glitchify<R: Rng>(input: &[i16], text: &str, pitch: f32, retro: bool, rng: &mut R) -> Clip {
     let x: Vec<f32> = input.iter().map(|&s| s as f32 / 32768.0).collect();
     let x = if x.is_empty() || pitch == 1.0 { x } else { resample(&x, pitch) };
+    if !retro {
+        return clip_of(x, Vec::new(), text);
+    }
     let chunk = (RATE as f32 * 0.07) as usize;
     let mut out: Vec<f32> = Vec::with_capacity(x.len() * 13 / 10);
     let mut marks: Vec<(usize, usize)> = Vec::new();
@@ -154,8 +160,13 @@ pub fn glitchify<R: Rng>(input: &[i16], text: &str, pitch: f32, rng: &mut R) -> 
         }
         *s = held;
     }
-    let samples: Vec<i16> = out.iter().map(|s| (s.clamp(-1.0, 1.0) * 32000.0) as i16).collect();
+    clip_of(out, marks, text)
+}
 
+/// A clip with its mouth envelope and glitch frames (`marks` are sample
+/// ranges that glitched).
+fn clip_of(out: Vec<f32>, marks: Vec<(usize, usize)>, text: &str) -> Clip {
+    let samples: Vec<i16> = out.iter().map(|s| (s.clamp(-1.0, 1.0) * 32000.0) as i16).collect();
     let spf = RATE as f32 / FPS;
     let frames = (out.len() as f32 / spf).ceil() as usize;
     let mut env: Vec<f32> = (0..frames)
@@ -191,7 +202,7 @@ mod tests {
             .map(|i| ((i as f32 * 0.05).sin() * 12000.0) as i16)
             .collect();
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
-        let c = glitchify(&tone, "hi", 0.84, &mut rng);
+        let c = glitchify(&tone, "hi", 0.84, true, &mut rng);
         assert!(!c.samples.is_empty());
         assert_eq!(c.env.len(), c.glitch.len());
         let frames = (c.samples.len() as f32 / (RATE as f32 / FPS)).ceil() as usize;
@@ -201,9 +212,19 @@ mod tests {
     }
 
     #[test]
+    fn clean_keeps_audio() {
+        let tone: Vec<i16> = (0..RATE).map(|i| ((i as f32 * 0.05).sin() * 12000.0) as i16).collect();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let c = glitchify(&tone, "hi", 1.0, false, &mut rng);
+        assert_eq!(c.samples.len(), tone.len());
+        assert!(c.glitch.iter().all(|&g| !g));
+        assert!(c.env.iter().any(|&e| e > 0.5));
+    }
+
+    #[test]
     fn empty_input() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-        let c = glitchify(&[], "", 0.84, &mut rng);
+        let c = glitchify(&[], "", 0.84, true, &mut rng);
         assert!(c.samples.is_empty() && c.env.is_empty());
     }
 

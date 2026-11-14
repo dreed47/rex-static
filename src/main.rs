@@ -18,6 +18,7 @@ mod tts;
 use ::rand::Rng;
 use ::rand::seq::IndexedRandom;
 use head::{Mood, Pose};
+use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation, PipelineParams};
 use macroquad::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -81,7 +82,7 @@ impl Rex {
 
     fn render(&self, text: &str) -> Option<Arc<tts::Clip>> {
         match tts::synth(&self.voice, text) {
-            Ok(pcm) => Some(Arc::new(tts::glitchify(&pcm, text, self.voice.pitch, &mut ::rand::rng()))),
+            Ok(pcm) => Some(Arc::new(tts::glitchify(&pcm, text, self.voice.pitch, self.voice.retro, &mut ::rand::rng()))),
             Err(e) => {
                 eprintln!("rex-static: {e}");
                 None
@@ -197,10 +198,10 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         let fillers = fillers.clone();
         let voice = rex.voice.clone();
         thread::spawn(move || {
-            for (i, lines) in [persona::SHORT_FILLERS, persona::LONG_FILLERS].into_iter().enumerate() {
+            for (i, lines) in [persona::SHORT_FILLERS, who.persona.long_fillers()].into_iter().enumerate() {
                 for line in lines {
                     if let Ok(pcm) = tts::synth(&voice, line) {
-                        let c = Arc::new(tts::glitchify(&pcm, line, voice.pitch, &mut ::rand::rng()));
+                        let c = Arc::new(tts::glitchify(&pcm, line, voice.pitch, voice.retro, &mut ::rand::rng()));
                         if let Ok(mut f) = fillers.lock() {
                             f[i].push(c);
                         }
@@ -212,7 +213,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
     let mut last_filler = String::new();
 
     rex.cancel.store(false, Ordering::SeqCst);
-    rex.say(&who.fill(&if claude.is_some() { pick(persona::GREETINGS) } else { persona::NO_KEY.to_string() }));
+    rex.say(&who.fill(&if claude.is_some() { pick(who.persona.greetings()) } else { persona::NO_KEY.to_string() }));
     rex.set(|s| s.phase = Phase::Idle);
 
     for job in rx {
@@ -337,7 +338,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             Some(Err(e)) => {
                 eprintln!("rex-static: claude: {e}");
                 rex.set(|s| s.error = e);
-                rex.say(&pick(persona::ERRORS));
+                rex.say(&pick(who.persona.errors()));
             }
         }
         if tools.take_switch().is_some() {
@@ -377,6 +378,19 @@ uniform mat4 Projection;
 void main() {
     gl_Position = Projection * Model * vec4(position, 1.0);
     uv = texcoord;
+}
+"#;
+
+/// Lays the side view over the front at a set strength. The render
+/// target's own alpha is not 1 everywhere (blended draws lower it), so the
+/// shader ignores it and uses the `strength` uniform instead.
+const MIX_FRAG: &str = r#"#version 100
+precision mediump float;
+varying lowp vec2 uv;
+uniform sampler2D Texture;
+uniform float strength;
+void main() {
+    gl_FragColor = vec4(texture2D(Texture, uv).rgb, strength);
 }
 "#;
 
@@ -539,6 +553,8 @@ async fn run() {
                 piper: config::get().piper.clone(),
                 model: models_dir().join(config::get().persona.voice_file()),
                 pitch: config::get().persona.pitch(),
+                pace: config::get().persona.pace(),
+                retro: config::get().persona.retro(),
             },
         };
         thread::spawn(move || worker(rex, rx));
@@ -556,14 +572,46 @@ async fn run() {
         });
     }
 
-    let rt = render_target(200, 200);
-    rt.texture.set_filter(FilterMode::Nearest);
+    // Retro personas draw at 200 px and go through the CRT shader; modern
+    // ones draw sharp at 600 px with no glitches.
+    let retro = config::get().persona.retro();
+    let res = if retro { 200 } else { 600 };
+    let rt = render_target(res, res);
+    rt.texture.set_filter(if retro { FilterMode::Nearest } else { FilterMode::Linear });
     let cam = Camera2D {
         zoom: vec2(2.0 / 200.0, 2.0 / 200.0),
         target: vec2(100.0, 100.0),
         render_target: Some(rt.clone()),
         ..Default::default()
     };
+    // Second target for the side photo while the head crossfades to it.
+    let rt2 = render_target(res, res);
+    rt2.texture.set_filter(FilterMode::Linear);
+    let cam2 = Camera2D {
+        zoom: cam.zoom,
+        target: cam.target,
+        render_target: Some(rt2.clone()),
+        ..Default::default()
+    };
+    let mixer = load_material(
+        ShaderSource::Glsl { vertex: VERT, fragment: MIX_FRAG },
+        MaterialParams {
+            uniforms: vec![UniformDesc::new("strength", UniformType::Float1)],
+            pipeline_params: PipelineParams {
+                color_blend: Some(BlendState::new(
+                    Equation::Add,
+                    BlendFactor::Value(BlendValue::SourceAlpha),
+                    BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                )),
+                // Leave the target's alpha alone, or the screen draw
+                // darkens the frame against black.
+                alpha_blend: Some(BlendState::new(Equation::Add, BlendFactor::Zero, BlendFactor::One)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .expect("mix shader");
     let crt = load_material(
         ShaderSource::Glsl { vertex: VERT, fragment: FRAG },
         MaterialParams {
@@ -581,6 +629,7 @@ async fn run() {
     // mannequin when the config says plastic or an image won't load.
     let cfg = config::get();
     let want_photo = cfg.face == config::FaceChoice::Photo;
+    let mut sides: Option<[face::Face; 2]> = None;
     let mut photo = match cfg.face {
         config::FaceChoice::Photo => face::Face::load(&memory::data_dir().join("face.png"), &face::PHOTO),
         config::FaceChoice::Plastic => None,
@@ -590,18 +639,37 @@ async fn run() {
             if own.is_file() {
                 face::Face::load(&own, p.face_spec())
             } else {
+                // Side photos only match the built-in front.
+                sides = p.side_views().and_then(|[l, r]| {
+                    Some([face::Face::from_bytes(l.0, l.1)?, face::Face::from_bytes(r.0, r.1)?])
+                });
                 face::Face::from_bytes(p.image(), p.face_spec())
             }
         }
     };
+    if !retro {
+        for f in photo.iter_mut().chain(sides.iter_mut().flatten()) {
+            f.gloss = 0.35;
+            f.skin_sides = true;
+        }
+    }
+    // How far (radians) the side photos are turned.
+    const SIDE_YAW: f32 = 0.3;
     let mut dummy = mannequin::Mannequin::new();
-    let backdrop = face::backdrop();
+    let backdrop = if retro { face::backdrop() } else { face::backdrop_modern() };
     let mut rng = ::rand::rng();
     let mut rec: Option<audio::Recorder> = None;
     let mut typed = String::new();
     let mut pose = Pose::default();
     let mut tick = 0.0f32;
     let mut sway = 1.0f32;
+    // Side-photo turns: where the head is heading, how far it is, how fast
+    // it moves, and when the next change is due.
+    const LOOK: f32 = 0.34;
+    let mut look = 0.0f32;
+    let mut look_yaw = 0.0f32;
+    let mut look_v = 0.0f32;
+    let mut look_until = 4.0f32;
     let mut freeze = 0.0f32;
     let mut glitch = 0.0f32;
     let start = Instant::now();
@@ -678,22 +746,45 @@ async fn run() {
             _ => (0.0, false, 1.0),
         };
 
-        // Choppy 12 fps animation with freezes and twitches.
+        // Retro: choppy 12 fps animation with freezes and twitches.
+        // Modern: smooth, every frame.
         tick += dt;
-        if tick >= 1.0 / 12.0 {
+        if !retro || tick >= 1.0 / 12.0 {
+            let step = if retro { 1.0 / 12.0 } else { dt };
             tick = 0.0;
             if freeze > 0.0 {
-                freeze -= 1.0 / 12.0;
+                freeze -= step;
             } else {
-                if rng.random_bool(0.03) {
+                if retro && rng.random_bool(0.03) {
                     freeze = rng.random_range(0.15..0.5);
                 }
                 let talk = mood == Mood::Speaking;
                 // Full sway while talking, calmer when not; eased so the
                 // switch doesn't jump.
                 let target = if talk { 1.0 } else { IDLE_SWAY };
-                sway += (target - sway) * 0.15;
-                pose.yaw = ((t * 0.7).sin() * 0.32 + (t * 1.9).sin() * 0.06) * sway;
+                sway += (target - sway) * (0.15 * step * 12.0).min(1.0);
+                // A flat photo face looks like a mask when it turns far, so
+                // the modern personas turn less.
+                // Side photos make a far turn look real again.
+                let turn = if retro || sides.is_some() { 1.0 } else { 0.6 };
+                if sides.is_some() {
+                    // Side photos: face front with a small drift, now and
+                    // then turn to one side, hold, and come back. Few,
+                    // deliberate turns read better than constant sway
+                    // through the photo change.
+                    if t >= look_until {
+                        let away = look == 0.0;
+                        look = if away { if rng.random_bool(0.5) { LOOK } else { -LOOK } } else { 0.0 };
+                        look_until = t + if away { rng.random_range(2.5..5.0) } else { rng.random_range(7.0..14.0) };
+                    }
+                    // Critically damped spring: eases in and out, no overshoot.
+                    let k = 4.0;
+                    look_v += (k * k * (look - look_yaw) - 2.0 * k * look_v) * step;
+                    look_yaw += look_v * step;
+                    pose.yaw = look_yaw + ((t * 0.7).sin() * 0.03 + (t * 1.9).sin() * 0.012) * sway;
+                } else {
+                    pose.yaw = ((t * 0.7).sin() * 0.32 + (t * 1.9).sin() * 0.06) * sway * turn;
+                }
                 pose.pitch = (t * 0.53).sin() * 0.1 * sway + if talk { env * 0.1 } else { 0.0 };
                 pose.roll = (t * 0.9).sin() * 0.07 * sway;
                 pose.dx = (t * 0.4).sin() * 4.0 * sway;
@@ -706,9 +797,12 @@ async fn run() {
                 };
                 if mood == Mood::Thinking {
                     pose.roll += 0.12;
-                    pose.yaw += 0.15;
+                    // Not with side photos: a held half turn sits mid-morph.
+                    if sides.is_none() {
+                        pose.yaw += 0.15 * turn;
+                    }
                 }
-                if hit || rng.random_bool(if talk { 0.05 } else { 0.02 }) {
+                if retro && (hit || rng.random_bool(if talk { 0.05 } else { 0.02 })) {
                     pose.yaw += rng.random_range(-0.3..0.3) * sway;
                     pose.roll += rng.random_range(-0.15..0.15) * sway;
                     pose.dx += rng.random_range(-8.0..8.0) * sway;
@@ -722,25 +816,56 @@ async fn run() {
             Mood::Booting => 0.35,
             _ => 0.0,
         };
-        if hit || rng.random_bool(0.004) {
-            glitch = 1.0;
+        if retro {
+            if hit || rng.random_bool(0.004) {
+                glitch = 1.0;
+            }
+            glitch = (glitch - dt * 3.0).max(base);
         }
-        glitch = (glitch - dt * 3.0).max(base);
 
         // Draw the low-res broadcast.
         set_camera(&cam);
         face::draw_backdrop(&backdrop);
         match photo.as_mut() {
             Some(f) => {
-                face::draw_body(&pose, f.neck, f.collar, f.shirt);
-                f.draw(&pose, t);
+                face::draw_body(&pose, f.neck, f.collar, f.shirt, !retro);
+                let blink = f.blink(t);
+                // Turned far enough, morph to the side photo: both photos
+                // bend to one shared shape, the front one draws here, the
+                // side one into rt2, and that fades over the top.
+                let w = face::smoothstep(0.06, 0.24, pose.yaw.abs());
+                match (sides.as_ref(), w > 0.01) {
+                    (Some(views), true) => {
+                        let right = pose.yaw > 0.0;
+                        let side = &views[right as usize];
+                        let mut p2 = pose;
+                        p2.yaw -= if right { SIDE_YAW } else { -SIDE_YAW };
+                        face::draw_morph(f, &pose, side, &p2, w, false, blink);
+                        set_camera(&cam2);
+                        face::draw_backdrop(&backdrop);
+                        face::draw_body(&pose, f.neck, f.collar, f.shirt, true);
+                        face::draw_morph(f, &pose, side, &p2, w, true, blink);
+                        set_camera(&cam);
+                        mixer.set_uniform("strength", w);
+                        gl_use_material(&mixer);
+                        draw_texture_ex(
+                            &rt2.texture,
+                            0.0,
+                            0.0,
+                            WHITE,
+                            DrawTextureParams { dest_size: Some(vec2(200.0, 200.0)), ..Default::default() },
+                        );
+                        gl_use_default_material();
+                    }
+                    _ => face::draw_morph(f, &pose, f, &pose, 0.0, false, blink),
+                }
             }
             None if want_photo => {
-                face::draw_body(&pose, Color::new(0.8, 0.62, 0.5, 1.0), Color::new(0.92, 0.9, 0.84, 1.0), face::SHIRT);
+                face::draw_body(&pose, Color::new(0.8, 0.62, 0.5, 1.0), Color::new(0.92, 0.9, 0.84, 1.0), face::SHIRT, false);
                 head::draw_head(&pose, mood);
             }
             None => {
-                face::draw_body(&pose, mannequin::Mannequin::NECK, mannequin::Mannequin::COLLAR, face::SHIRT);
+                face::draw_body(&pose, mannequin::Mannequin::NECK, mannequin::Mannequin::COLLAR, face::SHIRT, false);
                 dummy.draw(&pose, t);
             }
         }
@@ -767,9 +892,11 @@ async fn run() {
 
         set_default_camera();
         clear_background(BLACK);
-        crt.set_uniform("time", t);
-        crt.set_uniform("glitch", glitch);
-        gl_use_material(&crt);
+        if retro {
+            crt.set_uniform("time", t);
+            crt.set_uniform("glitch", glitch);
+            gl_use_material(&crt);
+        }
         // Keep the head square if the window isn't.
         let side = screen_width().min(screen_height());
         draw_texture_ex(

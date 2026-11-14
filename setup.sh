@@ -45,6 +45,10 @@ fetch "$piper_base/ryan/high/en_US-ryan-high.onnx" en_US-ryan-high.onnx b3990d76
 fetch "$piper_base/ryan/high/en_US-ryan-high.onnx.json" en_US-ryan-high.onnx.json c6d3b98f08315cb4bebf0d49d50fc4ff491b503c64b940cd3d5ca28543b48011
 fetch "$piper_base/lessac/high/en_US-lessac-high.onnx" en_US-lessac-high.onnx 4cabf7c3a638017137f34a1516522032d4fe3f38228a843cc9b764ddcbcd9e09
 fetch "$piper_base/lessac/high/en_US-lessac-high.onnx.json" en_US-lessac-high.onnx.json db42b97d9859f257bc1561b8ed980e7fb2398402050a74ddd6cbec931a92412f
+fetch "$piper_base/hfc_male/medium/en_US-hfc_male-medium.onnx" en_US-hfc_male-medium.onnx d11e403a02bdf5a670c877b3dc56e0e1c8cece6fb30289586314dffdc0a78cb0
+fetch "$piper_base/hfc_male/medium/en_US-hfc_male-medium.onnx.json" en_US-hfc_male-medium.onnx.json f66847424aed0bf99ecbb5d7cfde47c0a906f426a0daf7c46f305e7d21afd886
+fetch "$piper_base/amy/medium/en_US-amy-medium.onnx" en_US-amy-medium.onnx b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18
+fetch "$piper_base/amy/medium/en_US-amy-medium.onnx.json" en_US-amy-medium.onnx.json 95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77
 fetch "$whisper_base/ggml-base.en.bin" ggml-base.en.bin a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002
 
 if [[ ! -e $conf ]]; then

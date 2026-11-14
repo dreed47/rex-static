@@ -97,14 +97,19 @@ said yes to this exact action: propose it first.",
 }
 
 fn switch_def() -> Value {
+    let who: Vec<String> = Persona::ALL.iter().map(|p| format!("{} is {}", p.tag(), p.default_name())).collect();
+    let tags: Vec<&str> = Persona::ALL.iter().map(|p| p.tag()).collect();
     json!({
         "name": "switch_persona",
-        "description": "Switch to the other persona when the user asks: male is Rex Static, female \
-is Roxy Static. The app saves the choice and restarts as that persona after your reply.",
+        "description": format!(
+            "Switch to another persona when the user asks: {}. The app saves the choice and restarts \
+as that persona after your reply.",
+            who.join(", ")
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "persona": { "type": "string", "enum": ["male", "female"] }
+                "persona": { "type": "string", "enum": tags }
             },
             "required": ["persona"]
         }
@@ -249,10 +254,9 @@ want to do and ask if that's okay. If they say yes, call this tool again with ex
     }
 
     fn switch_to(&self, input: &Value) -> Result<String, String> {
-        let to = match input["persona"].as_str() {
-            Some("male") => Persona::Male,
-            Some("female") => Persona::Female,
-            _ => return Err("persona must be male or female".into()),
+        let Some(to) = input["persona"].as_str().and_then(Persona::from_tag) else {
+            let tags: Vec<&str> = Persona::ALL.iter().map(|p| p.tag()).collect();
+            return Err(format!("persona must be one of {}", tags.join(", ")));
         };
         if to == self.tools.current {
             return Ok(format!("Already {}. Nothing to switch.", to.tag()));

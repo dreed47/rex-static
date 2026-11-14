@@ -4,9 +4,16 @@ A glitchy, slightly plastic digital person who lives in a small window on
 your Linux desktop. Hold the space bar to talk, or type. Answers come from
 Claude and are spoken with a local Piper voice.
 
-Two personas: **Rex Static** (male) and **Roxy Static** (female). Pick one
-in the config file, or ask the persona to switch (for example "switch to
-Roxy"). It saves the choice to the config and restarts as the other one.
+Four personas:
+
+- **Rex Static** (male) and **Roxy Static** (female): the 80s look, with a
+  CRT screen, glitches and a choppy, stuttering voice.
+- **Miles** (male) and **Clara** (female): a modern look, with smooth motion,
+  soft lighting and a natural voice.
+
+Pick one in the config file, or ask the persona to switch (for example
+"switch to Clara"). It saves the choice to the config and restarts as the
+other one.
 
 ![Rex Static and Roxy Static](docs/screenshot.png)
 
@@ -50,7 +57,7 @@ The file is `~/.config/rex-static/config`. See
 
 | Key | What it does |
 |---|---|
-| `persona` | `male` (Rex) or `female` (Roxy) |
+| `persona` | `male` (Rex), `female` (Roxy), `modern-male` (Miles) or `modern-female` (Clara) |
 | `user_name` | Your name, so the persona can use it |
 | `model` | Claude model id (default `claude-haiku-5-5`) |
 | `face` | `auto` (built-in head), `plastic` or `photo` |
@@ -116,7 +123,7 @@ These need a rebuild (`cargo build --release`):
 
 ## Your own head image
 
-Put `rex.png` or `roxy.png` in `~/.local/share/rex-static/` to replace the
+Put `rex.png`, `roxy.png`, `miles.png` or `clara.png` in `~/.local/share/rex-static/` to replace the
 built-in head. It needs the same layout as the built-in image (face centred,
 looking forward), or the mouth and eyes won't line up.
 
@@ -144,13 +151,15 @@ folder and never touch it.
 
 ## Credits
 
-Head images are AI-generated. Voices: Piper `en_US-ryan-high` and
-`en_US-lessac-high`. Speech recognition: whisper.cpp `base.en`.
+Head images are AI-generated. Voices: Piper `en_US-ryan-high`,
+`en_US-lessac-high`, `en_US-hfc_male-medium` and `en_US-amy-medium`. Speech recognition: whisper.cpp `base.en`.
 
 `setup.sh` downloads the voice and speech models; they aren't part of this
 repo and have their own licences. See the model cards for
 [ryan](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/ryan/high/MODEL_CARD),
-[lessac](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/lessac/high/MODEL_CARD)
+[lessac](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/lessac/high/MODEL_CARD),
+[hfc_male](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/hfc_male/medium/MODEL_CARD),
+[amy](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/amy/medium/MODEL_CARD)
 and [whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp).
 
 `vendor/miniquad` is a patched copy of

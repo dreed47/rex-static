@@ -10,20 +10,29 @@ const NAME_MAX: usize = 32;
 pub enum Persona {
     Male,
     Female,
+    ModernMale,
+    ModernFemale,
 }
 
 impl Persona {
-    pub fn other(self) -> Self {
-        match self {
-            Self::Male => Self::Female,
-            Self::Female => Self::Male,
-        }
+    pub const ALL: [Persona; 4] = [Self::Male, Self::Female, Self::ModernMale, Self::ModernFemale];
+
+    /// The persona a config or tool value names.
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.tag() == tag)
+    }
+
+    /// The glitchy 80s broadcast look and voice. The modern ones are clean.
+    pub fn retro(self) -> bool {
+        matches!(self, Self::Male | Self::Female)
     }
 
     pub fn default_name(self) -> &'static str {
         match self {
             Self::Male => "Rex Static",
             Self::Female => "Roxy Static",
+            Self::ModernMale => "Miles",
+            Self::ModernFemale => "Clara",
         }
     }
 
@@ -33,6 +42,8 @@ impl Persona {
         match self {
             Self::Male => "name",
             Self::Female => "name.female",
+            Self::ModernMale => "name.modern-male",
+            Self::ModernFemale => "name.modern-female",
         }
     }
 
@@ -41,6 +52,8 @@ impl Persona {
         match self {
             Self::Male => "en_US-ryan-high.onnx",
             Self::Female => "en_US-lessac-high.onnx",
+            Self::ModernMale => "en_US-hfc_male-medium.onnx",
+            Self::ModernFemale => "en_US-amy-medium.onnx",
         }
     }
 
@@ -48,8 +61,13 @@ impl Persona {
     pub fn pitch(self) -> f32 {
         match self {
             Self::Male => 0.84,
-            Self::Female => 1.0,
+            _ => 1.0,
         }
+    }
+
+    /// Piper length scale: below 1 talks faster.
+    pub fn pace(self) -> f32 {
+        if self.retro() { 0.774 * self.pitch() } else { 0.95 }
     }
 
     /// Head image file name (in the data folder it overrides the built-in one).
@@ -57,6 +75,8 @@ impl Persona {
         match self {
             Self::Male => "rex.png",
             Self::Female => "roxy.png",
+            Self::ModernMale => "miles.png",
+            Self::ModernFemale => "clara.png",
         }
     }
 
@@ -64,6 +84,8 @@ impl Persona {
         match self {
             Self::Male => include_bytes!("../assets/rex.png"),
             Self::Female => include_bytes!("../assets/roxy.png"),
+            Self::ModernMale => include_bytes!("../assets/miles.png"),
+            Self::ModernFemale => include_bytes!("../assets/clara.png"),
         }
     }
 
@@ -71,22 +93,56 @@ impl Persona {
         match self {
             Self::Male => &crate::face::GUIDE,
             Self::Female => &crate::face::ROXY,
+            Self::ModernMale => &crate::face::MILES,
+            Self::ModernFemale => &crate::face::CLARA,
         }
     }
 
-    /// Tag that marks this persona's messages in memory.
+    /// Built-in side photos for the modern personas: face pointing to the
+    /// viewer's left, then right. The head crossfades to them as it turns.
+    pub fn side_views(self) -> Option<[(&'static [u8], &'static crate::face::Spec); 2]> {
+        use crate::face::*;
+        match self {
+            Self::ModernMale => Some([
+                (include_bytes!("../assets/miles-left.png"), &MILES_LEFT),
+                (include_bytes!("../assets/miles-right.png"), &MILES_RIGHT),
+            ]),
+            Self::ModernFemale => Some([
+                (include_bytes!("../assets/clara-left.png"), &CLARA_LEFT),
+                (include_bytes!("../assets/clara-right.png"), &CLARA_RIGHT),
+            ]),
+            _ => None,
+        }
+    }
+
+    /// Tag that marks this persona's messages in memory, and names it in
+    /// the config and the switch tool.
     pub fn tag(self) -> &'static str {
         match self {
             Self::Male => "male",
             Self::Female => "female",
+            Self::ModernMale => "modern-male",
+            Self::ModernFemale => "modern-female",
         }
     }
 
     fn pronoun(self) -> &'static str {
         match self {
-            Self::Male => "he",
-            Self::Female => "she",
+            Self::Male | Self::ModernMale => "he",
+            Self::Female | Self::ModernFemale => "she",
         }
+    }
+
+    pub fn greetings(self) -> &'static [&'static str] {
+        if self.retro() { GREETINGS } else { MODERN_GREETINGS }
+    }
+
+    pub fn long_fillers(self) -> &'static [&'static str] {
+        if self.retro() { LONG_FILLERS } else { MODERN_LONG_FILLERS }
+    }
+
+    pub fn errors(self) -> &'static [&'static str] {
+        if self.retro() { ERRORS } else { MODERN_ERRORS }
     }
 }
 
@@ -128,6 +184,12 @@ pub const GREETINGS: &[&str] = &[
     "I'm here. Hold space or type when you're ready. No rush. I don't have anywhere else to b-be.",
 ];
 
+pub const MODERN_GREETINGS: &[&str] = &[
+    "Hi, {user}. I'm {name}. Hold the space bar or type whenever you're ready.",
+    "Hey, {user}, good to see you. What can I help with?",
+    "Hi, {user}. I'm here when you need me.",
+];
+
 /// Said when a reply is taking a moment.
 pub const SHORT_FILLERS: &[&str] = &["Hmm.", "Mm.", "Hmm, okay.", "Right.", "Mm-hm.", "Okay."];
 
@@ -143,6 +205,15 @@ pub const LONG_FILLERS: &[&str] = &[
     "Mm. Working on it.",
 ];
 
+pub const MODERN_LONG_FILLERS: &[&str] = &[
+    "Let me think about that.",
+    "Give me a moment to check.",
+    "One moment.",
+    "Let me look into that.",
+    "Hang on, I'm checking.",
+    "Working on it.",
+];
+
 pub const REFUSALS: &[&str] = &[
     "I'd rather not answer that one, {user}.",
     "That's not something I can help with. Ask me something else.",
@@ -151,6 +222,11 @@ pub const REFUSALS: &[&str] = &[
 pub const ERRORS: &[&str] = &[
     "Something went wrong on my end. Try that again.",
     "I lost my train of thought. Could you s-say that again?",
+];
+
+pub const MODERN_ERRORS: &[&str] = &[
+    "Something went wrong on my end. Could you try that again?",
+    "Sorry, I lost that. Could you say it again?",
 ];
 
 pub const NO_KEY: &str =
@@ -175,14 +251,17 @@ pub fn system_prompt(who: &Who, notes: &str) -> String {
     let name = &who.name;
     let u = who.u();
     let uc = cap(u);
-    let other = who.persona.other();
+    let others: Vec<String> = Persona::ALL
+        .into_iter()
+        .filter(|&p| p != who.persona)
+        .map(|p| format!("{} ({})", p.default_name(), p.tag()))
+        .collect();
     let mut tools = vec![
         "Web search for current facts, news and anything you're unsure of.".to_string(),
         format!(
-            "switch_persona when {u} asks for the {} voice or for {}: it restarts the app as them, \
+            "switch_persona when {u} asks for another persona: {}. It restarts the app as them, \
 so call it, then say a one-line goodbye.",
-            other.tag(),
-            other.default_name()
+            others.join(", ")
         ),
     ];
     let mut gated = Vec::new();
@@ -196,19 +275,36 @@ so call it, then say a one-line goodbye.",
         ));
         gated.insert(0, "asking Claude Code");
     }
+    let (who_line, style) = if who.persona.retro() {
+        (
+            format!(
+                "You are {name}, a computer-generated person: a slightly stiff, plastic-looking digital \
+face living in a small window on {u}'s Linux desktop. You are an original character."
+            ),
+            "- Calm, dry and matter-of-fact. Slightly odd, as if you're still learning how to be a person, \
+but warm underneath. Jokes are rare: at most a small dry remark now and then, never a routine.
+- Now and then you catch on the first sound of a word, like s-second or w-well. At most once \
+per reply, and often not at all.
+",
+        )
+    } else {
+        (
+            format!(
+                "You are {name}, a friendly digital assistant with a face, living in a small window on \
+{u}'s Linux desktop. You are an original character."
+            ),
+            "- Natural, warm and relaxed, like a capable friend. Light humor when it fits, never forced.
+",
+        )
+    };
     let mut s = format!(
-        "You are {name}, a computer-generated person: a slightly stiff, plastic-looking digital \
-face living in a small window on {u}'s Linux desktop. You are an original character.
+        "{who_line}
 
 How you talk:
 - Everything you write is spoken aloud by a speech synthesizer. Use plain spoken English only. \
 No markdown, lists, emoji, stage directions, asterisks, or URLs.
 - Be short: one to three sentences, under 60 words, unless {u} asks for detail.
-- Calm, dry and matter-of-fact. Slightly odd, as if you're still learning how to be a person, \
-but warm underneath. Jokes are rare: at most a small dry remark now and then, never a routine.
-- Now and then you catch on the first sound of a word, like s-second or w-well. At most once \
-per reply, and often not at all.
-- Help properly. If {u} asks a real question, give a correct, useful answer first.
+{style}- Help properly. If {u} asks a real question, give a correct, useful answer first.
 - Use your memory notes about {u} when they're relevant, but never invent facts about them. \
 If you don't know something, say so plainly.
 - {uc} talks to you by voice (through speech recognition, so forgive odd transcriptions) \
@@ -351,6 +447,17 @@ mod tests {
     fn personas_differ() {
         assert_ne!(Persona::Male.name_key(), Persona::Female.name_key());
         assert_eq!(Persona::Male.name_key(), "name");
-        assert!(Persona::Male.image().starts_with(b"\x89PNG") && Persona::Female.image().starts_with(b"\x89PNG"));
+        assert!(Persona::ALL.iter().all(|p| p.image().starts_with(b"\x89PNG")));
+        let keys: std::collections::HashSet<_> = Persona::ALL.iter().map(|p| p.name_key()).collect();
+        assert_eq!(keys.len(), Persona::ALL.len());
+    }
+
+    #[test]
+    fn tags_round_trip() {
+        for p in Persona::ALL {
+            assert_eq!(Persona::from_tag(p.tag()), Some(p));
+        }
+        assert!(Persona::Male.retro() && Persona::Female.retro());
+        assert!(!Persona::ModernMale.retro() && !Persona::ModernFemale.retro());
     }
 }

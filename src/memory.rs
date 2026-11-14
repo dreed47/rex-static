@@ -199,6 +199,7 @@ mod tests {
     fn old_database_gets_persona_column() {
         let path = data_dir().join("old.db");
         assert!(path.starts_with(std::env::temp_dir()));
+        std::fs::create_dir_all(data_dir()).unwrap();
         let _ = std::fs::remove_file(&path);
         let c = Connection::open(&path).unwrap();
         c.execute_batch(

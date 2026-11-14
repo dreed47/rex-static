@@ -2,7 +2,8 @@
 # One "key = value" per line; "#" starts a comment. Every key is optional.
 # The file must be yours and not writable by others, or it's ignored.
 
-# male (Rex Static, Ryan voice) or female (Roxy Static, Lessac voice)
+# male (Rex Static, Ryan voice), female (Roxy Static, Lessac voice),
+# modern-male (Miles, HFC male voice) or modern-female (Clara, Amy voice)
 persona = male
 
 # Your name, so the persona can use it. Leave out to stay generic.
@@ -13,8 +14,8 @@ persona = male
 # the models page in the Anthropic docs for ids.
 # model = claude-haiku-5-5
 
-# auto: the persona's built-in head (put rex.png or roxy.png in
-#       ~/.local/share/rex-static to use your own image instead)
+# auto: the persona's built-in head (put rex.png, roxy.png, miles.png or
+#       clara.png in ~/.local/share/rex-static to use your own image instead)
 # plastic: procedural mannequin, no image
 # photo: ~/.local/share/rex-static/face.png
 # face = auto

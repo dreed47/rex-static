@@ -179,10 +179,9 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
         let (key, value) = (key.trim(), value.trim());
         let mut bad = |why: &str| problems.push(format!("line {}: {key}: {why}", n + 1));
         match key {
-            "persona" => match value {
-                "male" => cfg.persona = Persona::Male,
-                "female" => cfg.persona = Persona::Female,
-                _ => bad("use male or female"),
+            "persona" => match Persona::from_tag(value) {
+                Some(p) => cfg.persona = p,
+                None => bad("use male, female, modern-male or modern-female"),
             },
             "user_name" => match clean_name(value) {
                 Some(v) => cfg.user_name = Some(v),
