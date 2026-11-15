@@ -6,6 +6,51 @@ use std::process::Command;
 
 const NAME_MAX: usize = 32;
 
+/// The face files in `assets/faces/<path>/`.
+macro_rules! files {
+    ($($p:literal),+) => {
+        crate::patches::Files {
+            json: include_str!(concat!("../assets/faces/", $($p, "/",)+ "faces.json")),
+            mouth: [
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_rest.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_aa.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_ah.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_ee.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_ih.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_oh.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_oo.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_mm.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "mouth_ff.png")),
+            ],
+            eyes: [
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "eyes_rest.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "eyes_blink06.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "eyes_blink10.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "eyes_blink14.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "eyes_look_l14.png")),
+                include_bytes!(concat!("../assets/faces/", $($p, "/",)+ "eyes_look_r14.png")),
+            ],
+        }
+    };
+}
+
+/// One turned view in `assets/faces/<persona>/views/<name>/`.
+macro_rules! view {
+    ($d:literal, $v:literal) => {
+        View {
+            face: include_bytes!(concat!("../assets/faces/", $d, "/views/", $v, "/face.png")),
+            files: files!($d, "views", $v),
+        }
+    };
+}
+
+/// A turned face: the turned part of the portrait (an RGBA crop, placed by
+/// the `face` entry in its `faces.json`) and that view's mouth and eye frames.
+pub struct View {
+    pub face: &'static [u8],
+    pub files: crate::patches::Files,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Persona {
     Male,
@@ -89,6 +134,16 @@ impl Persona {
         }
     }
 
+    /// LivePortrait mouth and eye frames for the built-in image.
+    pub fn patches(self) -> crate::patches::Files {
+        match self {
+            Self::Male => files!("rex"),
+            Self::Female => files!("roxy"),
+            Self::ModernMale => files!("miles"),
+            Self::ModernFemale => files!("zosia"),
+        }
+    }
+
     pub fn face_spec(self) -> &'static crate::face::Spec {
         match self {
             Self::Male => &crate::face::GUIDE,
@@ -98,19 +153,18 @@ impl Persona {
         }
     }
 
-    /// Built-in side photos for the modern personas: face pointing to the
-    /// viewer's left, then right. The head crossfades to them as it turns.
-    pub fn side_views(self) -> Option<[(&'static [u8], &'static crate::face::Spec); 2]> {
-        use crate::face::*;
+    /// Built-in turned views for the modern personas, LivePortrait yaw
+    /// -8, -4, 4 and 8 degrees (negative faces the viewer's left). The head
+    /// crossfades through them as it turns.
+    pub fn views(self) -> Option<[View; 4]> {
+        macro_rules! views {
+            ($d:literal) => {
+                [view!($d, "yn8"), view!($d, "yn4"), view!($d, "y4"), view!($d, "y8")]
+            };
+        }
         match self {
-            Self::ModernMale => Some([
-                (include_bytes!("../assets/miles-left.png"), &MILES_LEFT),
-                (include_bytes!("../assets/miles-right.png"), &MILES_RIGHT),
-            ]),
-            Self::ModernFemale => Some([
-                (include_bytes!("../assets/clara-left.png"), &CLARA_LEFT),
-                (include_bytes!("../assets/clara-right.png"), &CLARA_RIGHT),
-            ]),
+            Self::ModernMale => Some(views!("miles")),
+            Self::ModernFemale => Some(views!("zosia")),
             _ => None,
         }
     }
@@ -427,6 +481,19 @@ pub fn take_rename(reply: &str) -> (Option<String>, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn views_fit_portraits() {
+        use macroquad::prelude::Image;
+        for p in [Persona::ModernMale, Persona::ModernFemale] {
+            let img = Image::from_file_with_format(p.image(), None).unwrap();
+            for (i, v) in p.views().expect("modern personas have views").iter().enumerate() {
+                let turned = crate::face::turned_image(&img, v).unwrap_or_else(|| panic!("{} view {i}", p.tag()));
+                assert!(crate::patches::Patches::from_image(&turned, &v.files).is_some(), "{} view {i} patches", p.tag());
+            }
+        }
+        assert!(Persona::Male.views().is_none() && Persona::Female.views().is_none());
+    }
 
     #[test]
     fn rename_tag() {

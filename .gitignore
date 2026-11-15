@@ -5,3 +5,5 @@ target/
 *.onnx.json
 *.bin
 face.png
+!assets/faces/*/views/*/face.png
+__pycache__/

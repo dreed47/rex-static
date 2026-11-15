@@ -27,6 +27,14 @@ if [[ ! -x $HOME/.local/bin/piper ]]; then
   uv tool install piper-tts
 fi
 
+# Phoneme timings for lip sync need onnx in Piper's own Python. Optional:
+# without it the mouth follows how loud the voice is.
+piper_py="$(dirname "$(readlink -f "$HOME/.local/bin/piper")")/python"
+if [[ -x $piper_py ]] && ! "$piper_py" -I -c "import onnx" 2>/dev/null; then
+  echo "Adding onnx to Piper for lip sync timings..."
+  uv pip install --python "$piper_py" onnx || echo "onnx install failed; lip sync falls back to loudness" >&2
+fi
+
 mkdir -p "$models"
 fetch() { # url name sha256
   local dest="$models/$2"

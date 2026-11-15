@@ -209,7 +209,7 @@ pub const MILES: Spec = Spec {
     dome: 4.0,
     relief: 0.45,
     edge: 1.0,
-    shade: 0.3,
+    shade: 0.0,
     outline: &[
         (256.0, 66.0),
         (291.0, 69.0),
@@ -288,7 +288,7 @@ pub const CLARA: Spec = Spec {
     dome: 4.0,
     relief: 0.45,
     edge: 1.0,
-    shade: 0.3,
+    shade: 0.0,
     outline: &[
         (254.0, 52.0),
         (288.0, 52.0),
@@ -358,377 +358,6 @@ pub const CLARA: Spec = Spec {
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
     body: true,
 };
-
-// Side views of the modern personas. Each name is the screen side the face
-// points to. They share px, cx and cy with their front spec, so the photos
-// keep the same pixel layout; only the outline and features move.
-
-/// `assets/miles-left.png` (510×730): the same head turned so the face points
-/// to the viewer's left.
-pub const MILES_LEFT: Spec = Spec {
-    px: 215.0,
-    cx: 255.5,
-    cy: 383.5,
-    dome: 4.0,
-    relief: 0.45,
-    edge: 1.0,
-    shade: 0.3,
-    outline: &[
-        (256.0, 68.0),
-        (283.0, 70.0),
-        (310.0, 76.0),
-        (336.0, 84.0),
-        (361.0, 94.0),
-        (383.0, 110.0),
-        (402.0, 129.0),
-        (420.0, 149.0),
-        (436.0, 169.0),
-        (448.0, 191.0),
-        (454.0, 217.0),
-        (457.0, 243.0),
-        (457.0, 267.0),
-        (456.0, 290.0),
-        (454.0, 311.0),
-        (460.0, 329.0),
-        (467.0, 346.0),
-        (468.0, 365.0),
-        (466.0, 384.0),
-        (465.0, 402.0),
-        (460.0, 420.0),
-        (452.0, 436.0),
-        (443.0, 452.0),
-        (424.0, 462.0),
-        (415.0, 476.0),
-        (414.0, 494.0),
-        (412.0, 515.0),
-        (410.0, 538.0),
-        (398.0, 545.0),
-        (378.0, 565.0),
-        (348.0, 585.0),
-        (318.0, 604.0),
-        (287.0, 624.0),
-        (252.0, 639.0),
-        (216.0, 642.0),
-        (182.0, 636.0),
-        (158.0, 622.0),
-        (137.0, 589.0),
-        (124.0, 571.0),
-        (113.0, 553.0),
-        (104.0, 535.0),
-        (98.0, 516.0),
-        (94.0, 496.0),
-        (92.0, 478.0),
-        (87.0, 462.0),
-        (85.0, 445.0),
-        (82.0, 430.0),
-        (80.0, 414.0),
-        (79.0, 399.0),
-        (82.0, 384.0),
-        (82.0, 368.0),
-        (79.0, 352.0),
-        (76.0, 335.0),
-        (76.0, 318.0),
-        (71.0, 297.0),
-        (68.0, 275.0),
-        (66.0, 251.0),
-        (67.0, 225.0),
-        (72.0, 200.0),
-        (80.0, 174.0),
-        (92.0, 150.0),
-        (108.0, 127.0),
-        (126.0, 106.0),
-        (149.0, 91.0),
-        (174.0, 80.0),
-        (200.0, 71.0),
-        (228.0, 68.0),
-    ],
-    eyes: [(-0.544, -0.177), (0.141, -0.186)],
-    nose: (-0.241, 0.268),
-    mouth_y: 0.587,
-    mouth_x: (-0.503, 0.12),
-    hair_at: (255.0, 100.0),
-    lid_at: [(139.0, 372.0), (286.0, 371.0)],
-    neck_at: (255.0, 680.0),
-    collar_at: (120.0, 700.0),
-    shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
-    body: true,
-};
-
-/// `assets/miles-right.png` (510×730): the same head turned so the face points
-/// to the viewer's right.
-pub const MILES_RIGHT: Spec = Spec {
-    px: 215.0,
-    cx: 255.5,
-    cy: 383.5,
-    dome: 4.0,
-    relief: 0.45,
-    edge: 1.0,
-    shade: 0.3,
-    outline: &[
-        (256.0, 69.0),
-        (283.0, 70.0),
-        (310.0, 74.0),
-        (337.0, 81.0),
-        (363.0, 89.0),
-        (385.0, 105.0),
-        (406.0, 122.0),
-        (423.0, 144.0),
-        (435.0, 170.0),
-        (447.0, 192.0),
-        (452.0, 218.0),
-        (455.0, 244.0),
-        (455.0, 268.0),
-        (454.0, 291.0),
-        (451.0, 312.0),
-        (453.0, 331.0),
-        (452.0, 349.0),
-        (450.0, 367.0),
-        (452.0, 384.0),
-        (456.0, 401.0),
-        (456.0, 419.0),
-        (453.0, 436.0),
-        (451.0, 455.0),
-        (448.0, 473.0),
-        (446.0, 493.0),
-        (443.0, 515.0),
-        (438.0, 536.0),
-        (430.0, 558.0),
-        (419.0, 578.0),
-        (402.0, 592.0),
-        (382.0, 614.0),
-        (352.0, 634.0),
-        (312.0, 645.0),
-        (270.0, 647.0),
-        (232.0, 640.0),
-        (196.0, 630.0),
-        (162.0, 615.0),
-        (138.0, 592.0),
-        (126.0, 568.0),
-        (123.0, 541.0),
-        (120.0, 519.0),
-        (117.0, 500.0),
-        (113.0, 483.0),
-        (94.0, 477.0),
-        (81.0, 465.0),
-        (73.0, 450.0),
-        (66.0, 434.0),
-        (62.0, 418.0),
-        (57.0, 401.0),
-        (56.0, 384.0),
-        (58.0, 366.0),
-        (62.0, 349.0),
-        (66.0, 333.0),
-        (68.0, 315.0),
-        (65.0, 295.0),
-        (64.0, 273.0),
-        (63.0, 249.0),
-        (64.0, 223.0),
-        (69.0, 197.0),
-        (80.0, 174.0),
-        (93.0, 152.0),
-        (110.0, 131.0),
-        (129.0, 111.0),
-        (152.0, 98.0),
-        (176.0, 87.0),
-        (202.0, 79.0),
-        (228.0, 74.0),
-    ],
-    eyes: [(-0.04, -0.164), (0.647, -0.179)],
-    nose: (0.343, 0.293),
-    mouth_y: 0.63,
-    mouth_x: (0.002, 0.601),
-    hair_at: (255.0, 100.0),
-    lid_at: [(247.0, 375.0), (395.0, 372.0)],
-    neck_at: (255.0, 680.0),
-    collar_at: (120.0, 700.0),
-    shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
-    body: true,
-};
-
-/// `assets/clara-left.png` (510×730): the same head turned so the face points
-/// to the viewer's left.
-pub const CLARA_LEFT: Spec = Spec {
-    px: 211.0,
-    cx: 254.0,
-    cy: 351.0,
-    dome: 4.0,
-    relief: 0.45,
-    edge: 1.0,
-    shade: 0.3,
-    outline: &[
-        (254.0, 56.0),
-        (280.0, 57.0),
-        (305.0, 61.0),
-        (330.0, 68.0),
-        (353.0, 80.0),
-        (374.0, 94.0),
-        (392.0, 111.0),
-        (409.0, 130.0),
-        (422.0, 151.0),
-        (433.0, 172.0),
-        (440.0, 195.0),
-        (445.0, 217.0),
-        (449.0, 238.0),
-        (450.0, 260.0),
-        (450.0, 280.0),
-        (453.0, 298.0),
-        (455.0, 316.0),
-        (455.0, 333.0),
-        (452.0, 351.0),
-        (448.0, 368.0),
-        (441.0, 384.0),
-        (432.0, 399.0),
-        (422.0, 412.0),
-        (399.0, 419.0),
-        (395.0, 432.0),
-        (392.0, 447.0),
-        (388.0, 463.0),
-        (385.0, 482.0),
-        (368.0, 503.0),
-        (345.0, 522.0),
-        (320.0, 538.0),
-        (296.0, 552.0),
-        (270.0, 566.0),
-        (245.0, 577.0),
-        (220.0, 581.0),
-        (195.0, 580.0),
-        (172.0, 577.0),
-        (156.0, 562.0),
-        (142.0, 545.0),
-        (130.0, 528.0),
-        (120.0, 510.0),
-        (112.0, 493.0),
-        (105.0, 476.0),
-        (101.0, 458.0),
-        (97.0, 442.0),
-        (91.0, 427.0),
-        (87.0, 412.0),
-        (84.0, 396.0),
-        (82.0, 381.0),
-        (81.0, 366.0),
-        (86.0, 351.0),
-        (87.0, 336.0),
-        (88.0, 322.0),
-        (88.0, 307.0),
-        (86.0, 290.0),
-        (82.0, 271.0),
-        (81.0, 251.0),
-        (82.0, 231.0),
-        (84.0, 209.0),
-        (89.0, 186.0),
-        (97.0, 164.0),
-        (108.0, 143.0),
-        (122.0, 122.0),
-        (138.0, 103.0),
-        (158.0, 86.0),
-        (180.0, 73.0),
-        (203.0, 64.0),
-        (228.0, 59.0),
-    ],
-    eyes: [(-0.588, -0.147), (0.085, -0.185)],
-    nose: (-0.303, 0.303),
-    mouth_y: 0.564,
-    mouth_x: (-0.507, 0.052),
-    hair_at: (180.0, 100.0),
-    lid_at: [(130.0, 347.0), (272.0, 339.0)],
-    neck_at: (254.0, 620.0),
-    collar_at: (150.0, 680.0),
-    shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
-    body: true,
-};
-
-/// `assets/clara-right.png` (510×730): the same head turned so the face points
-/// to the viewer's right.
-pub const CLARA_RIGHT: Spec = Spec {
-    px: 211.0,
-    cx: 254.0,
-    cy: 351.0,
-    dome: 4.0,
-    relief: 0.45,
-    edge: 1.0,
-    shade: 0.3,
-    outline: &[
-        (254.0, 54.0),
-        (280.0, 59.0),
-        (304.0, 65.0),
-        (328.0, 73.0),
-        (351.0, 85.0),
-        (370.0, 101.0),
-        (387.0, 120.0),
-        (402.0, 140.0),
-        (414.0, 161.0),
-        (423.0, 182.0),
-        (428.0, 205.0),
-        (432.0, 227.0),
-        (433.0, 248.0),
-        (432.0, 268.0),
-        (428.0, 288.0),
-        (428.0, 304.0),
-        (429.0, 320.0),
-        (430.0, 336.0),
-        (432.0, 351.0),
-        (435.0, 367.0),
-        (434.0, 383.0),
-        (431.0, 398.0),
-        (427.0, 414.0),
-        (422.0, 429.0),
-        (420.0, 447.0),
-        (416.0, 464.0),
-        (411.0, 482.0),
-        (404.0, 501.0),
-        (394.0, 518.0),
-        (383.0, 535.0),
-        (369.0, 550.0),
-        (357.0, 572.0),
-        (330.0, 578.0),
-        (300.0, 581.0),
-        (270.0, 577.0),
-        (243.0, 567.0),
-        (215.0, 552.0),
-        (188.0, 535.0),
-        (162.0, 518.0),
-        (140.0, 514.0),
-        (137.0, 490.0),
-        (134.0, 471.0),
-        (131.0, 454.0),
-        (127.0, 440.0),
-        (123.0, 427.0),
-        (102.0, 422.0),
-        (90.0, 411.0),
-        (81.0, 397.0),
-        (75.0, 383.0),
-        (70.0, 367.0),
-        (67.0, 351.0),
-        (66.0, 335.0),
-        (66.0, 318.0),
-        (68.0, 301.0),
-        (69.0, 284.0),
-        (68.0, 264.0),
-        (69.0, 244.0),
-        (71.0, 223.0),
-        (75.0, 201.0),
-        (81.0, 178.0),
-        (90.0, 155.0),
-        (102.0, 134.0),
-        (117.0, 114.0),
-        (135.0, 96.0),
-        (156.0, 82.0),
-        (179.0, 70.0),
-        (203.0, 62.0),
-        (228.0, 58.0),
-    ],
-    eyes: [(-0.09, -0.161), (0.607, -0.185)],
-    nose: (0.275, 0.303),
-    mouth_y: 0.55,
-    mouth_x: (-0.019, 0.55),
-    hair_at: (180.0, 100.0),
-    lid_at: [(235.0, 344.0), (382.0, 339.0)],
-    neck_at: (254.0, 620.0),
-    collar_at: (150.0, 680.0),
-    shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
-    body: true,
-};
-
 
 pub(crate) fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
@@ -851,6 +480,9 @@ pub struct Face {
     /// The neck and shirt cut out of the photo, and the image row the
     /// cut-out starts at; `None` when the photo has no usable body.
     body: Option<(Texture2D, f32)>,
+    /// LivePortrait mouth and eye frames pasted into `tex`; with them the
+    /// front view skips the warped jaw, mouth gap and painted lids.
+    pub patches: Option<crate::patches::Patches>,
 }
 
 fn patch(img: &Image, x: f32, y: f32) -> Color {
@@ -922,6 +554,85 @@ fn body_cutout(img: &Image, s: &Spec) -> Option<(Texture2D, f32)> {
     Some((tex, top as f32))
 }
 
+/// A turned view of a built-in portrait: the view's face crop pasted over
+/// `portrait`, with its own mouth and eye frames. `None` if the files don't
+/// fit the portrait. The neck and shirt stay the front photo's.
+pub fn turned(portrait: &Image, v: &crate::persona::View, spec: &'static Spec) -> Option<Face> {
+    let img = turned_image(portrait, v)?;
+    let mut f = Face::from_image(&img, spec, false)?;
+    f.rim = follow_edge(&f.rim, portrait, &img, spec);
+    f.patches = Some(crate::patches::Patches::from_image(&img, &v.files)?);
+    Some(f)
+}
+
+/// `rim` (traced on `front`) moved to where the head's edge sits in
+/// `turned`: along each direction, the outline shifts by however far the
+/// edge against the white backdrop moved. Directions with no backdrop edge
+/// (chin into neck) keep their radius.
+fn follow_edge(rim: &[(f32, f32)], front: &Image, turned: &Image, spec: &Spec) -> Vec<(f32, f32)> {
+    let edge = |img: &Image, ang: f32, r: f32| -> Option<f32> {
+        let (w, h) = (img.width() as f32, img.height() as f32);
+        let (dx, dy) = (ang.cos(), ang.sin());
+        let mut run = 0;
+        let mut px = r * spec.px * 0.8;
+        while px < r * spec.px * 1.25 {
+            let (x, y) = (spec.cx + dx * px, spec.cy + dy * px);
+            if x < 0.0 || y < 0.0 || x >= w || y >= h {
+                return None;
+            }
+            let c = img.get_pixel(x as u32, y as u32);
+            if c.r.min(c.g).min(c.b) > 0.88 {
+                run += 1;
+                if run == 3 {
+                    return Some((px - 2.0) / spec.px);
+                }
+            } else {
+                run = 0;
+            }
+            px += 1.0;
+        }
+        None
+    };
+    let shift: Vec<f32> = rim
+        .iter()
+        .map(|&(a, r)| match (edge(front, a, r), edge(turned, a, r)) {
+            (Some(e0), Some(e1)) => e1 - e0,
+            _ => 0.0,
+        })
+        .collect();
+    let n = shift.len();
+    rim.iter()
+        .enumerate()
+        .map(|(i, &(a, r))| {
+            let s = (shift[(i + n - 1) % n] + 2.0 * shift[i] + shift[(i + 1) % n]) / 4.0;
+            (a, r + s)
+        })
+        .collect()
+}
+
+/// `portrait` with the view's face crop pasted over it.
+pub fn turned_image(portrait: &Image, v: &crate::persona::View) -> Option<Image> {
+    let man: serde_json::Value = serde_json::from_str(v.files.json).ok()?;
+    let at = man.get("patches")?.get("face")?;
+    let (x0, y0) = (at.get(0)?.as_u64()? as u32, at.get(1)?.as_u64()? as u32);
+    let crop = Image::from_file_with_format(v.face, Some(ImageFormat::Png)).ok()?;
+    let (cw, ch) = (crop.width() as u32, crop.height() as u32);
+    if x0 + cw > portrait.width() as u32 || y0 + ch > portrait.height() as u32 {
+        return None;
+    }
+    let mut img = portrait.clone();
+    for y in 0..ch {
+        for x in 0..cw {
+            let c = crop.get_pixel(x, y);
+            if c.a > 0.0 {
+                let b = img.get_pixel(x0 + x, y0 + y);
+                img.set_pixel(x0 + x, y0 + y, mix(b, c, c.a));
+            }
+        }
+    }
+    Some(img)
+}
+
 impl Face {
     /// Load the photo, or `None` if it's missing or unreadable.
     pub fn load(path: &std::path::Path, spec: &'static Spec) -> Option<Self> {
@@ -930,13 +641,17 @@ impl Face {
 
     /// Build from encoded image bytes (PNG or JPEG).
     pub fn from_bytes(bytes: &[u8], spec: &'static Spec) -> Option<Self> {
-        let img = Image::from_file_with_format(bytes, None).ok()?;
+        Self::from_image(&Image::from_file_with_format(bytes, None).ok()?, spec, spec.body)
+    }
+
+    /// Build from a decoded image; `body` cuts the neck and shirt out of it.
+    pub fn from_image(img: &Image, spec: &'static Spec, body: bool) -> Option<Self> {
         if img.width() < 64 || img.height() < 64 {
             return None;
         }
-        let tex = Texture2D::from_image(&img);
+        let tex = Texture2D::from_image(img);
         tex.set_filter(FilterMode::Linear);
-        let at = |p: (f32, f32)| patch(&img, p.0, p.1);
+        let at = |p: (f32, f32)| patch(img, p.0, p.1);
         Some(Self {
             spec,
             tex,
@@ -950,7 +665,8 @@ impl Face {
             collar: at(spec.collar_at),
             shirt: spec.shirt.unwrap_or(SHIRT),
             next_blink: 2.0,
-            body: if spec.body { body_cutout(&img, spec) } else { None },
+            body: if body { body_cutout(img, spec) } else { None },
+            patches: None,
         })
     }
 
@@ -1030,10 +746,20 @@ impl Face {
 
     /// Start or end a blink; true while the lids are down.
     pub fn blink(&mut self, t: f32) -> bool {
-        if t > self.next_blink + 0.14 {
+        if t > self.next_blink + crate::patches::BLINK {
             self.next_blink = t + ::rand::random_range(2.5..6.0);
         }
         t >= self.next_blink
+    }
+
+    /// Paste this frame's mouth and eye frames into the photo, if it has
+    /// them. Call after `blink`.
+    pub fn animate(&mut self, t: f32, mouth: &[f32; 8]) {
+        let u = t - self.next_blink;
+        let blink = (0.0..crate::patches::BLINK).contains(&u).then(|| u / crate::patches::BLINK);
+        if let Some(p) = self.patches.as_mut() {
+            p.apply(&self.tex, t, mouth, blink);
+        }
     }
 }
 
@@ -1042,7 +768,12 @@ impl Face {
 /// it, `w` of the way to `b`. Drawing both with the same `w` and fading one
 /// over the other morphs between them with no double outline.
 pub fn draw_morph(a: &Face, pa: &Pose, b: &Face, pb: &Pose, w: f32, show_b: bool, blink: bool) {
-    Pair::new(a, pa, b, pb, w).render(show_b, pa.mouth, blink);
+    if a.patches.is_some() && !show_b {
+        // The frames already show the mouth and the eyes.
+        Pair::new(a, pa, b, pb, w).render(false, 0.0, false);
+    } else {
+        Pair::new(a, pa, b, pb, w).render(show_b, pa.mouth, blink);
+    }
 }
 
 /// Feature points that should line up between two photos.
@@ -1432,8 +1163,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn view_outlines_follow_the_cheek() {
+        use crate::persona::Persona;
+        for p in [Persona::ModernMale, Persona::ModernFemale] {
+            let img = Image::from_file_with_format(p.image(), None).unwrap();
+            let rim = trace(p.face_spec());
+            for (k, v) in p.views().unwrap().iter().enumerate() {
+                let t = turned_image(&img, v).unwrap();
+                let moved = follow_edge(&rim, &img, &t, p.face_spec());
+                let d: Vec<f32> = rim.iter().zip(&moved).map(|(a, b)| b.1 - a.1).collect();
+                eprintln!("{} {k}: {:?}", p.tag(), d.iter().map(|x| (x * 100.0).round() / 100.0).collect::<Vec<_>>());
+                assert!(d.iter().all(|x| x.abs() < 0.12), "{} view {k} outline jumps", p.tag());
+            }
+        }
+    }
+
+    #[test]
     fn rim_follows_outline_all_round() {
-        for spec in [&PHOTO, &GUIDE, &ROXY, &MILES, &CLARA, &MILES_LEFT, &MILES_RIGHT, &CLARA_LEFT, &CLARA_RIGHT] {
+        for spec in [&PHOTO, &GUIDE, &ROXY, &MILES, &CLARA] {
             let rim = trace(spec);
             for &(px, py) in spec.outline {
                 let v = vec2((px - spec.cx) / spec.px, (py - spec.cy) / spec.px);
@@ -1446,7 +1193,7 @@ mod tests {
 
     #[test]
     fn features_sit_inside_the_outline() {
-        for spec in [&PHOTO, &GUIDE, &ROXY, &MILES, &CLARA, &MILES_LEFT, &MILES_RIGHT, &CLARA_LEFT, &CLARA_RIGHT] {
+        for spec in [&PHOTO, &GUIDE, &ROXY, &MILES, &CLARA] {
             let rim = trace(spec);
             let pts = [spec.eyes[0], spec.eyes[1], spec.nose, (spec.mouth_x.0, spec.mouth_y), (spec.mouth_x.1, spec.mouth_y)];
             for (x, y) in pts {
@@ -1457,7 +1204,7 @@ mod tests {
 
     #[test]
     fn warp_lines_up_features_and_outline() {
-        let pairs = [(&MILES, &MILES_LEFT), (&MILES, &MILES_RIGHT), (&CLARA, &CLARA_LEFT), (&CLARA, &CLARA_RIGHT)];
+        let pairs = [(&MILES, &CLARA), (&CLARA, &MILES)];
         for (a, b) in pairs {
             let m = Warp::new(a, b);
             for (pa, pb) in anchors(a).iter().zip(anchors(b)) {

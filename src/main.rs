@@ -6,10 +6,12 @@ mod audio;
 mod config;
 mod face;
 mod head;
+mod lipsync;
 mod llm;
 mod mannequin;
 mod memory;
 mod mqtt;
+mod patches;
 mod persona;
 mod prefs;
 mod stt;
@@ -91,7 +93,9 @@ impl Rex {
 
     fn render(&self, text: &str) -> Option<Arc<tts::Clip>> {
         match tts::synth(&self.voice, text) {
-            Ok(pcm) => Some(Arc::new(tts::glitchify(&pcm, text, self.voice.pitch, self.voice.retro, &mut ::rand::rng()))),
+            Ok((pcm, phones)) => {
+                Some(Arc::new(tts::glitchify(&pcm, &phones, text, self.voice.pitch, self.voice.retro, &mut ::rand::rng())))
+            }
             Err(e) => {
                 eprintln!("rex-static: {e}");
                 None
@@ -209,8 +213,8 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         thread::spawn(move || {
             for (i, lines) in [persona::SHORT_FILLERS, who.persona.long_fillers()].into_iter().enumerate() {
                 for line in lines {
-                    if let Ok(pcm) = tts::synth(&voice, line) {
-                        let c = Arc::new(tts::glitchify(&pcm, line, voice.pitch, voice.retro, &mut ::rand::rng()));
+                    if let Ok((pcm, phones)) = tts::synth(&voice, line) {
+                        let c = Arc::new(tts::glitchify(&pcm, &phones, line, voice.pitch, voice.retro, &mut ::rand::rng()));
                         if let Ok(mut f) = fillers.lock() {
                             f[i].push(c);
                         }
@@ -440,7 +444,7 @@ void main() {
 }
 "#;
 
-/// Lays the side view over the front at a set strength. The render
+/// Lays one turned view over another at a set strength. The render
 /// target's own alpha is not 1 everywhere (blended draws lower it), so the
 /// shader ignores it and uses the `strength` uniform instead.
 const MIX_FRAG: &str = r#"#version 100
@@ -532,6 +536,45 @@ const FRAME: Duration = Duration::from_millis(16);
 const FRAME_IDLE: Duration = Duration::from_millis(50);
 const FRAME_IDLE_RETRO: Duration = Duration::from_millis(83);
 
+/// Modern render size: the head's side in real screen pixels, so the
+/// compositor shows it 1:1 instead of stretching a fixed-size picture.
+/// The persona's built-in turned views, if it has them and they all load.
+fn load_views(p: persona::Persona) -> Option<[face::Face; 4]> {
+    let img = Image::from_file_with_format(p.image(), None).ok()?;
+    let [a, b, c, d] = p.views()?;
+    let one = |v: &persona::View| face::turned(&img, v, p.face_spec());
+    Some([one(&a)?, one(&b)?, one(&c)?, one(&d)?])
+}
+
+/// Draw view `j` of the turn: 0 and 1 face the viewer's left, 2 is the
+/// front photo, 3 and 4 face right.
+fn draw_view(front: &mut face::Face, views: &mut [face::Face; 4], j: usize, pose: &Pose, t: f32, mouth: &[f32; 8], blink: bool) {
+    if j == 2 {
+        return face::draw_morph(front, pose, front, pose, 0.0, false, blink);
+    }
+    let v = &mut views[if j < 2 { j } else { j - 1 }];
+    v.animate(t, mouth);
+    face::draw_morph(v, pose, v, pose, 0.0, false, blink);
+}
+
+fn modern_res() -> u32 {
+    let side = screen_width().min(screen_height()) * miniquad::window::dpi_scale();
+    (side.round() as u32).clamp(200, 2400)
+}
+
+/// A square render target and the 200-unit camera that draws into it.
+fn make_target(res: u32, nearest: bool) -> (RenderTarget, Camera2D) {
+    let rt = render_target(res, res);
+    rt.texture.set_filter(if nearest { FilterMode::Nearest } else { FilterMode::Linear });
+    let cam = Camera2D {
+        zoom: vec2(2.0 / 200.0, 2.0 / 200.0),
+        target: vec2(100.0, 100.0),
+        render_target: Some(rt.clone()),
+        ..Default::default()
+    };
+    (rt, cam)
+}
+
 fn conf() -> Conf {
     Conf {
         window_title: config::get().persona.default_name().into(),
@@ -540,7 +583,9 @@ fn conf() -> Conf {
         window_width: saved_size().0,
         window_height: saved_size().1,
         window_resizable: true,
-        high_dpi: false,
+        // Real pixels (buffer scale 2 on a 1.6 monitor, shrunk by the
+        // compositor), so the head and captions stay sharp.
+        high_dpi: true,
         // Native Wayland, so a left-click drag uses xdg_toplevel.move.
         platform: miniquad::conf::Platform {
             linux_backend: miniquad::conf::LinuxBackend::WaylandWithX11Fallback,
@@ -692,6 +737,7 @@ async fn run() {
                 pitch: config::get().persona.pitch(),
                 pace: config::get().persona.pace(),
                 retro: config::get().persona.retro(),
+                timed: tts::timed_python(&config::get().piper),
             },
         };
         thread::spawn(move || worker(rex, rx));
@@ -710,26 +756,12 @@ async fn run() {
     }
 
     // Retro personas draw at 200 px and go through the CRT shader; modern
-    // ones draw sharp at 600 px with no glitches.
+    // ones draw sharp at the window's real pixel size with no glitches.
     let retro = config::get().persona.retro();
-    let res = if retro { 200 } else { 600 };
-    let rt = render_target(res, res);
-    rt.texture.set_filter(if retro { FilterMode::Nearest } else { FilterMode::Linear });
-    let cam = Camera2D {
-        zoom: vec2(2.0 / 200.0, 2.0 / 200.0),
-        target: vec2(100.0, 100.0),
-        render_target: Some(rt.clone()),
-        ..Default::default()
-    };
-    // Second target for the side photo while the head crossfades to it.
-    let rt2 = render_target(res, res);
-    rt2.texture.set_filter(FilterMode::Linear);
-    let cam2 = Camera2D {
-        zoom: cam.zoom,
-        target: cam.target,
-        render_target: Some(rt2.clone()),
-        ..Default::default()
-    };
+    let mut res = if retro { 200 } else { modern_res() };
+    let (mut rt, mut cam) = make_target(res, retro);
+    // Second target for the next turned view while the head crossfades to it.
+    let (mut rt2, mut cam2) = make_target(res, false);
     let mixer = load_material(
         ShaderSource::Glsl { vertex: VERT, fragment: MIX_FRAG },
         MaterialParams {
@@ -766,7 +798,7 @@ async fn run() {
     // mannequin when the config says plastic or an image won't load.
     let cfg = config::get();
     let want_photo = cfg.face == config::FaceChoice::Photo;
-    let mut sides: Option<[face::Face; 2]> = None;
+    let mut views: Option<[face::Face; 4]> = None;
     let mut photo = match cfg.face {
         config::FaceChoice::Photo => face::Face::load(&memory::data_dir().join("face.png"), &face::PHOTO),
         config::FaceChoice::Plastic => None,
@@ -776,22 +808,22 @@ async fn run() {
             if own.is_file() {
                 face::Face::load(&own, p.face_spec())
             } else {
-                // Side photos only match the built-in front.
-                sides = p.side_views().and_then(|[l, r]| {
-                    Some([face::Face::from_bytes(l.0, l.1)?, face::Face::from_bytes(r.0, r.1)?])
-                });
-                face::Face::from_bytes(p.image(), p.face_spec())
+                // Turned views only match the built-in front.
+                views = load_views(p);
+                face::Face::from_bytes(p.image(), p.face_spec()).map(|mut f| {
+                    f.patches = patches::Patches::load(p.image(), &p.patches());
+                    f
+                })
             }
         }
     };
     if !retro {
-        for f in photo.iter_mut().chain(sides.iter_mut().flatten()) {
-            f.gloss = 0.35;
+        for f in photo.iter_mut().chain(views.iter_mut().flatten()) {
+            // The photo carries its own light; no fake sheen on top.
+            f.gloss = 0.0;
             f.skin_sides = true;
         }
     }
-    // How far (radians) the side photos are turned.
-    const SIDE_YAW: f32 = 0.3;
     let mut dummy = mannequin::Mannequin::new();
     let backdrop = if retro { face::backdrop() } else { face::backdrop_modern() };
     let mut rng = ::rand::rng();
@@ -800,9 +832,10 @@ async fn run() {
     let mut pose = Pose::default();
     let mut tick = 0.0f32;
     let mut sway = 1.0f32;
-    // Side-photo turns: where the head is heading, how far it is, how fast
-    // it moves, and when the next change is due.
-    const LOOK: f32 = 0.1;
+    // Turns through the views: where the head is heading, how far it is,
+    // how fast it moves, and when the next change is due. 1 is the far
+    // view on the viewer's right, -1 on the left.
+    const LOOKS: [f32; 4] = [-1.0, -0.5, 0.5, 1.0];
     // Seconds a caption stays after speech before it starts to fade.
     const CAPTION_HOLD: f32 = 4.0;
     let mut caption_seen = String::new();
@@ -843,6 +876,12 @@ async fn run() {
         } else if size != size_saved && t - size_at > 0.3 {
             save_size(size.0, size.1);
             size_saved = size;
+        }
+        // Once a resize settles, match the modern render size to it.
+        if !retro && t - size_at > 0.3 && modern_res() != res {
+            res = modern_res();
+            (rt, cam) = make_target(res, false);
+            (rt2, cam2) = make_target(res, false);
         }
         if is_key_pressed(KeyCode::Escape) {
             if typed.is_empty() {
@@ -905,14 +944,20 @@ async fn run() {
         };
 
         // Where are we in the current clip?
-        let (env, hit, progress) = match (&s.clip, s.clip_start) {
+        let (env, hit, progress, mouth) = match (&s.clip, s.clip_start) {
             (Some(c), Some(st)) => {
                 let e = st.elapsed().as_secs_f32() - 0.08;
                 let i = (e * tts::FPS).max(0.0) as usize;
+                let m = (e * lipsync::FPS).max(0.0) as usize;
                 let p = (e / c.duration().max(0.1)).clamp(0.0, 1.0);
-                (c.env.get(i).copied().unwrap_or(0.0), c.glitch.get(i).copied().unwrap_or(false), p)
+                (
+                    c.env.get(i).copied().unwrap_or(0.0),
+                    c.glitch.get(i).copied().unwrap_or(false),
+                    p,
+                    c.mouth.get(m).copied().unwrap_or_default(),
+                )
             }
-            _ => (0.0, false, 1.0),
+            _ => (0.0, false, 1.0, [0.0; 8]),
         };
 
         // Retro: choppy 12 fps animation with freezes and twitches.
@@ -934,23 +979,21 @@ async fn run() {
                 sway += (target - sway) * (0.15 * step * 12.0).min(1.0);
                 // A flat photo face looks like a mask when it turns far, so
                 // the modern personas turn less.
-                // Side photos make a far turn look real again.
-                let turn = if retro || sides.is_some() { 1.0 } else { 0.6 };
-                if sides.is_some() {
-                    // Side photos: face front with a small drift, now and
-                    // then turn to one side, hold, and come back. Few,
-                    // deliberate turns read better than constant sway
-                    // through the photo change.
+                let turn = if retro { 1.0 } else { 0.6 };
+                if views.is_some() {
+                    // Turned views: face front with a small drift, now and
+                    // then turn to one side, hold, and come back. The views
+                    // do the turning; the mesh only drifts.
                     if t >= look_until {
                         let away = look == 0.0;
-                        look = if away { if rng.random_bool(0.5) { LOOK } else { -LOOK } } else { 0.0 };
+                        look = if away { LOOKS[rng.random_range(0..4)] } else { 0.0 };
                         look_until = t + if away { rng.random_range(2.5..5.0) } else { rng.random_range(7.0..14.0) };
                     }
                     // Critically damped spring: eases in and out, no overshoot.
                     let k = 4.0;
                     look_v += (k * k * (look - look_yaw) - 2.0 * k * look_v) * step;
                     look_yaw += look_v * step;
-                    pose.yaw = look_yaw + ((t * 0.7).sin() * 0.03 + (t * 1.9).sin() * 0.012) * sway;
+                    pose.yaw = ((t * 0.7).sin() * 0.03 + (t * 1.9).sin() * 0.012) * sway;
                 } else {
                     pose.yaw = ((t * 0.7).sin() * 0.32 + (t * 1.9).sin() * 0.06) * sway * turn;
                 }
@@ -966,8 +1009,7 @@ async fn run() {
                 };
                 if mood == Mood::Thinking {
                     pose.roll += 0.12;
-                    // Not with side photos: a held half turn sits mid-morph.
-                    if sides.is_none() {
+                    if views.is_none() {
                         pose.yaw += 0.15 * turn;
                     }
                 }
@@ -999,34 +1041,42 @@ async fn run() {
             Some(f) => {
                 f.draw_body(&pose, !retro);
                 let blink = f.blink(t);
-                // Turned far enough, morph to the side photo: both photos
-                // bend to one shared shape, the front one draws here, the
-                // side one into rt2, and that fades over the top.
-                let w = face::smoothstep(0.04, 0.16, pose.yaw.abs());
-                match (sides.as_ref(), w > 0.01) {
-                    (Some(views), true) => {
-                        let right = pose.yaw > 0.0;
-                        let side = &views[right as usize];
-                        let mut p2 = pose;
-                        p2.yaw -= if right { SIDE_YAW } else { -SIDE_YAW };
-                        face::draw_morph(f, &pose, side, &p2, w, false, blink);
-                        set_camera(&cam2);
-                        face::draw_backdrop(&backdrop);
-                        f.draw_body(&pose, true);
-                        face::draw_morph(f, &pose, side, &p2, w, true, blink);
-                        set_camera(&cam);
-                        mixer.set_uniform("strength", w);
-                        gl_use_material(&mixer);
-                        draw_texture_ex(
-                            &rt2.texture,
-                            0.0,
-                            0.0,
-                            WHITE,
-                            DrawTextureParams { dest_size: Some(vec2(200.0, 200.0)), ..Default::default() },
-                        );
-                        gl_use_default_material();
+                f.animate(t, &mouth);
+                match views.as_mut() {
+                    Some(vs) => {
+                        // Views in order: far left, left, front (the photo),
+                        // right, far right. Draw the two either side of
+                        // the turn and fade the second over the first.
+                        let at = (look_yaw * 2.0 + 2.0).clamp(0.0, 4.0);
+                        let i = (at.floor() as usize).min(3);
+                        let w = at - i as f32;
+                        let (a, b) = if w < 0.01 { (i, None) } else if w > 0.99 { (i + 1, None) } else { (i, Some(i + 1)) };
+                        for v in vs.iter_mut() {
+                            v.next_blink = f.next_blink;
+                            if let (Some(vp), Some(fp)) = (v.patches.as_mut(), f.patches.as_ref()) {
+                                vp.sync_from(fp);
+                            }
+                        }
+                        draw_view(f, vs, a, &pose, t, &mouth, blink);
+                        if let Some(b) = b {
+                            set_camera(&cam2);
+                            face::draw_backdrop(&backdrop);
+                            f.draw_body(&pose, true);
+                            draw_view(f, vs, b, &pose, t, &mouth, blink);
+                            set_camera(&cam);
+                            mixer.set_uniform("strength", w);
+                            gl_use_material(&mixer);
+                            draw_texture_ex(
+                                &rt2.texture,
+                                0.0,
+                                0.0,
+                                WHITE,
+                                DrawTextureParams { dest_size: Some(vec2(200.0, 200.0)), ..Default::default() },
+                            );
+                            gl_use_default_material();
+                        }
                     }
-                    _ => face::draw_morph(f, &pose, f, &pose, 0.0, false, blink),
+                    None => face::draw_morph(f, &pose, f, &pose, 0.0, false, blink),
                 }
             }
             None if want_photo => {
