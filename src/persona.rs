@@ -160,6 +160,10 @@ pub struct Who {
     pub persona: Persona,
     pub user: Option<String>,
     pub tools: ToolSet,
+    /// Brief mode: one short sentence per reply.
+    pub brief: bool,
+    /// Actions the user said "always" to, as prompt text.
+    pub always: Vec<String>,
 }
 
 impl Who {
@@ -271,10 +275,24 @@ so call it, then say a one-line goodbye.",
     }
     if who.tools.claude_code {
         tools.push(format!(
-            "Claude Code (ask_claude_code) for questions about files, projects or settings on {u}'s computer."
+            "Claude Code (ask_claude_code) for questions about files, projects or settings on {u}'s computer, \
+including this app."
         ));
-        gated.insert(0, "asking Claude Code");
+        if !who.always.iter().any(|a| a == "asking Claude Code") {
+            gated.insert(0, "asking Claude Code");
+        }
     }
+    tools.push(format!(
+        "set_brief when {u} asks you to be brief or to give more detail by default."
+    ));
+    let length = if who.brief {
+        format!(
+            "- Brief mode is on: one short sentence, under 25 words. No small talk, no offers of more help. \
+Say more only if {u} asks for detail.\n"
+        )
+    } else {
+        format!("- Be short: one to three sentences, under 60 words, unless {u} asks for detail.\n")
+    };
     let (who_line, style) = if who.persona.retro() {
         (
             format!(
@@ -303,8 +321,7 @@ per reply, and often not at all.
 How you talk:
 - Everything you write is spoken aloud by a speech synthesizer. Use plain spoken English only. \
 No markdown, lists, emoji, stage directions, asterisks, or URLs.
-- Be short: one to three sentences, under 60 words, unless {u} asks for detail.
-{style}- Help properly. If {u} asks a real question, give a correct, useful answer first.
+{length}{style}- Help properly. If {u} asks a real question, give a correct, useful answer first.
 - Use your memory notes about {u} when they're relevant, but never invent facts about them. \
 If you don't know something, say so plainly.
 - {uc} talks to you by voice (through speech recognition, so forgive odd transcriptions) \
@@ -317,15 +334,31 @@ spoken words.
     if !gated.is_empty() {
         s.push_str(&format!(
             "- {} needs {u}'s yes first. Say in one short sentence exactly what you'll do and ask if \
-that's okay. When they say yes, make that exact call. {} need no yes.\n",
+that's okay. When they say yes, make that exact call. {} need no yes. A yes with \"always\" in it \
+(\"yes always\") also counts, and the app remembers it so you won't need to ask for that again.\n",
             cap(&gated.join(" or ")),
             if who.tools.home_assistant { "Reading Home Assistant and web search" } else { "Web search and other tools" }
+        ));
+    }
+    if !who.always.is_empty() {
+        s.push_str(&format!(
+            "- {uc} said always to these, so do them without asking: {}.\n",
+            who.always.join(", ")
+        ));
+    }
+    if who.tools.claude_code || who.tools.home_assistant {
+        s.push_str(&format!(
+            "- If {u} asks you to ask first again, call forget_permissions.\n"
         ));
     }
     s.push_str(&format!(
         "- Your name is {name}. If {u} clearly gives you a new name, accept it simply and start \
 your reply with the tag <name>New Name</name> holding just the new name. Never write that tag \
 otherwise.\n"
+    ));
+    s.push_str(&format!(
+        "- This app is Rex Static, version {}. Answer questions about its version from this.\n",
+        env!("CARGO_PKG_VERSION")
     ));
     let t = local_time();
     if !t.is_empty() {
@@ -408,7 +441,14 @@ mod tests {
     }
 
     fn who(user: Option<&str>, tools: ToolSet) -> Who {
-        Who { name: "Vic".into(), persona: Persona::Female, user: user.map(String::from), tools }
+        Who {
+            name: "Vic".into(),
+            persona: Persona::Female,
+            user: user.map(String::from),
+            tools,
+            brief: false,
+            always: Vec::new(),
+        }
     }
 
     #[test]
@@ -441,6 +481,22 @@ mod tests {
         assert!(all.contains("- Asking Claude Code or changing anything in Home Assistant needs Sam's yes first."));
         let ha = system_prompt(&who(None, ToolSet { claude_code: false, home_assistant: true }), "");
         assert!(ha.contains("- Changing anything in Home Assistant needs the user's yes first."));
+        assert!(all.contains("forget_permissions") && !none.contains("forget_permissions"));
+        assert!(all.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn always_and_brief_change_the_prompt() {
+        let mut w = who(Some("Sam"), ToolSet { claude_code: true, home_assistant: true });
+        w.always = vec!["asking Claude Code".into(), "light.turn_on in Home Assistant".into()];
+        w.brief = true;
+        let p = system_prompt(&w, "");
+        assert!(p.contains("- Changing anything in Home Assistant needs Sam's yes first."));
+        assert!(p.contains("do them without asking: asking Claude Code, light.turn_on in Home Assistant."));
+        assert!(p.contains("Brief mode is on") && !p.contains("one to three sentences"));
+        w.always = vec!["asking Claude Code".into()];
+        w.tools.home_assistant = false;
+        assert!(!system_prompt(&w, "").contains("yes first"));
     }
 
     #[test]

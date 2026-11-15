@@ -20,14 +20,20 @@ persona = male
 # photo: ~/.local/share/rex-static/face.png
 # face = auto
 
+# Short, one-sentence replies. Saying "be brief" or "more detail" changes it
+# too, and that choice is remembered over this line.
+# brief = no
+
 # Piper program (default ~/.local/bin/piper, from setup.sh)
 # piper = ~/.local/bin/piper
 
 # Optional tool: let the persona ask Claude Code about your files.
-# Absolute path to the claude program. Asks your yes before each use.
+# Absolute path to the claude program. Asks your yes before each use;
+# answer "yes always" and it stops asking (say "ask first again" to undo).
 # claude_code = /usr/bin/claude
 
 # Optional tool: Home Assistant. Reads freely; asks your yes before changes.
+# "yes always" remembers that one service (for example light.turn_on) only.
 # ha_url = https://homeassistant.local:8123
 # Token file holds a long-lived access token (keep it mode 600).
 # ha_token_file = ~/.config/ha-token

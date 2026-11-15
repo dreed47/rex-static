@@ -5,9 +5,13 @@
 //! Actions that reach outside the app (Claude Code, Home Assistant service
 //! calls) pass a confirmation gate enforced here in code, not just in the
 //! prompt: the exact call must have been proposed on the previous turn and
-//! the user's latest message must be a plain yes.
+//! the user's latest message must be a plain yes. A yes with "always" in
+//! it is remembered (see prefs.rs), so that action stops asking: for Claude
+//! Code the whole tool, for Home Assistant one service such as
+//! light.turn_on.
 
 use crate::persona::Persona;
+use crate::prefs::Prefs;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -116,6 +120,27 @@ as that persona after your reply.",
     })
 }
 
+fn prefs_defs() -> [Value; 2] {
+    [
+        json!({
+            "name": "set_brief",
+            "description": "Turn brief mode on or off when the user asks you to be brief, less wordy or \
+shorter, or to give more detail by default. The app remembers it.",
+            "input_schema": {
+                "type": "object",
+                "properties": { "on": { "type": "boolean" } },
+                "required": ["on"]
+            }
+        }),
+        json!({
+            "name": "forget_permissions",
+            "description": "Forget every action the user said 'always' to, so you ask first again. Use \
+it when they ask you to ask first again or to stop doing things without asking.",
+            "input_schema": { "type": "object", "properties": {} }
+        }),
+    ]
+}
+
 /// Short line for the window while a tool runs.
 pub fn label(name: &str) -> &'static str {
     match name {
@@ -153,9 +178,52 @@ pub fn is_yes(text: &str) -> bool {
     YES.iter().any(|y| joined == *y || joined.starts_with(&format!("{y} ")))
 }
 
+/// A yes that should be remembered: "always", "yes always", "always do
+/// that". Not "always ask first", and nothing with a no in it.
+pub fn is_always(text: &str) -> bool {
+    let t: String = text
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '\'' { c } else { ' ' })
+        .collect();
+    let words: Vec<&str> = t.split_whitespace().collect();
+    const NO: &[&str] = &[
+        "no", "nope", "not", "don't", "dont", "wait", "stop", "cancel", "never", "hold", "ask", "first", "check",
+    ];
+    !words.is_empty() && words.len() <= 8 && words.contains(&"always") && !words.iter().any(|w| NO.contains(w))
+}
+
+/// Whether the call was the one proposed last turn. Claude Code only reads,
+/// so a rephrased task still counts; a Home Assistant change must match
+/// exactly.
+fn same_call(prev: Option<&(String, Value)>, name: &str, input: &Value) -> bool {
+    prev.is_some_and(|(n, i)| n == name && (name == "ask_claude_code" || i == input))
+}
+
 /// Gate decision for one gated call.
 pub fn allowed(prev: Option<&(String, Value)>, name: &str, input: &Value, user_text: &str) -> bool {
-    prev.is_some_and(|(n, i)| n == name && i == input) && is_yes(user_text)
+    same_call(prev, name, input) && (is_yes(user_text) || is_always(user_text))
+}
+
+/// What a "yes always" to this call remembers, if anything.
+fn grant_key(name: &str, input: &Value) -> Option<String> {
+    match name {
+        "ask_claude_code" => Some(name.to_string()),
+        "ha_call_service" => {
+            let (d, s) = (input["domain"].as_str()?, input["service"].as_str()?);
+            (ident(d) && ident(s)).then(|| format!("ha:{d}.{s}"))
+        }
+        _ => None,
+    }
+}
+
+/// How a remembered key reads in the prompt.
+pub fn grant_label(key: &str) -> String {
+    match key.strip_prefix("ha:") {
+        Some(svc) => format!("{svc} in Home Assistant"),
+        None if key == "ask_claude_code" => "asking Claude Code".into(),
+        None => key.to_string(),
+    }
 }
 
 pub struct Tools {
@@ -167,6 +235,9 @@ pub struct Tools {
     current: Persona,
     /// Persona to restart as, set by switch_persona.
     switch: Mutex<Option<Persona>>,
+    prefs: Mutex<Prefs>,
+    /// Brief mode from the config, until the user picks one by voice.
+    brief_default: bool,
 }
 
 /// Per-turn view: what was pending when the turn began, and what the user said.
@@ -177,8 +248,41 @@ pub struct Turn<'a> {
 }
 
 impl Tools {
-    pub fn new(cancel: Arc<AtomicBool>, claude: Option<PathBuf>, ha: Option<HaConf>, current: Persona) -> Self {
-        Self { pending: Mutex::new(None), cancel, claude, ha, current, switch: Mutex::new(None) }
+    pub fn new(
+        cancel: Arc<AtomicBool>,
+        claude: Option<PathBuf>,
+        ha: Option<HaConf>,
+        current: Persona,
+        brief_default: bool,
+    ) -> Self {
+        let prefs = Mutex::new(Prefs::load(&crate::prefs::path()));
+        Self { pending: Mutex::new(None), cancel, claude, ha, current, switch: Mutex::new(None), prefs, brief_default }
+    }
+
+    /// Use a prefs file of the test's own, so parallel tests don't share one.
+    #[cfg(test)]
+    fn with_prefs(mut self, name: &str) -> Self {
+        let p = crate::prefs::test_path(name);
+        let _ = std::fs::remove_file(&p);
+        self.prefs = Mutex::new(Prefs::load(&p));
+        self
+    }
+
+    /// Whether replies should be brief.
+    pub fn brief(&self) -> bool {
+        self.prefs.lock().ok().and_then(|p| p.brief()).unwrap_or(self.brief_default)
+    }
+
+    /// Actions the user said "always" to, as prompt text.
+    pub fn always_labels(&self) -> Vec<String> {
+        let Ok(p) = self.prefs.lock() else { return Vec::new() };
+        p.always()
+            .filter(|k| match *k {
+                "ask_claude_code" => self.claude.is_some(),
+                k => !k.starts_with("ha:") || self.ha.is_some(),
+            })
+            .map(grant_label)
+            .collect()
     }
 
     /// The persona switch_persona asked for, if any. Clears it.
@@ -193,7 +297,11 @@ impl Tools {
 
     /// Definitions for the tools that are set up.
     pub fn defs(&self) -> Vec<Value> {
-        let mut v = vec![switch_def()];
+        let [brief, forget] = prefs_defs();
+        let mut v = vec![switch_def(), brief];
+        if self.claude.is_some() || self.ha.is_some() {
+            v.push(forget);
+        }
         if self.claude.is_some() {
             v.push(claude_def());
         }
@@ -220,28 +328,42 @@ impl Turn<'_> {
         let set_up = match name {
             "ask_claude_code" => self.tools.claude.is_some(),
             "ha_states" | "ha_call_service" => self.tools.ha.is_some(),
-            "switch_persona" => true,
+            "switch_persona" | "set_brief" => true,
+            "forget_permissions" => self.tools.claude.is_some() || self.tools.ha.is_some(),
             _ => false,
         };
         if !set_up {
             return (format!("{name} is not available."), true);
         }
-        if gated(name) && !allowed(self.prev.as_ref(), name, input, &self.user_text) {
-            if let Ok(mut p) = self.tools.pending.lock() {
-                *p = Some((name.to_string(), input.clone()));
-            }
-            return (
-                "Not run: the user has not confirmed this yet. Tell them in one short sentence what you \
+        if gated(name) {
+            let key = grant_key(name, input);
+            let granted = key.as_ref().is_some_and(|k| self.tools.prefs.lock().is_ok_and(|p| p.has(k)));
+            if !granted && !allowed(self.prev.as_ref(), name, input, &self.user_text) {
+                if let Ok(mut p) = self.tools.pending.lock() {
+                    *p = Some((name.to_string(), input.clone()));
+                }
+                return (
+                    "Not run: the user has not confirmed this yet. Tell them in one short sentence what you \
 want to do and ask if that's okay. If they say yes, call this tool again with exactly the same input."
-                    .into(),
-                true,
-            );
+                        .into(),
+                    true,
+                );
+            }
+            if !granted && is_always(&self.user_text) {
+                if let (Some(k), Ok(mut p)) = (key, self.tools.prefs.lock()) {
+                    if let Err(e) = p.grant(&k) {
+                        eprintln!("rex-static: prefs: {e}");
+                    }
+                }
+            }
         }
         let r = match name {
             "ask_claude_code" => self.claude_code(input),
             "ha_states" => self.ha_states(input),
             "ha_call_service" => self.ha_call(input),
             "switch_persona" => self.switch_to(input),
+            "set_brief" => self.set_brief(input),
+            "forget_permissions" => self.forget(),
             _ => Err(format!("unknown tool {name}")),
         };
         match r {
@@ -271,14 +393,28 @@ want to do and ask if that's okay. If they say yes, call this tool again with ex
         ))
     }
 
+    fn set_brief(&self, input: &Value) -> Result<String, String> {
+        let on = input["on"].as_bool().ok_or("on must be true or false")?;
+        self.tools.prefs.lock().map_err(|_| "prefs lock")?.set_brief(on)?;
+        Ok(if on { "Brief mode on. Keep replies to one short sentence." } else { "Brief mode off." }.into())
+    }
+
+    fn forget(&self) -> Result<String, String> {
+        self.tools.prefs.lock().map_err(|_| "prefs lock")?.forget_all()?;
+        Ok("Forgotten. You'll ask first again before Claude Code or Home Assistant changes.".into())
+    }
+
     fn claude_code(&self, input: &Value) -> Result<String, String> {
         let task = input["task"].as_str().unwrap_or("").trim();
         if task.is_empty() {
             return Err("empty task".into());
         }
+        let words = if self.tools.brief() { 50 } else { 150 };
         let prompt = format!(
-            "{task}\n\nYou are answering for a voice assistant. Reply in plain text, under 150 words, \
-no markdown. Don't change any files."
+            "{task}\n\nYou are answering for a voice assistant. Reply in plain text, under {words} words, \
+no markdown. Don't change any files. You have no shell, and nobody can answer questions or grant \
+permissions during this run, so never ask for any: use the tools you have (read, search files, web \
+search), then answer with what you found. If you can't find it, say so in one sentence."
         );
         let claude = self.tools.claude.as_ref().ok_or("Claude Code is not set up")?;
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into());
@@ -511,18 +647,18 @@ mod tests {
     #[test]
     fn only_set_up_tools_exist() {
         let c = Arc::new(AtomicBool::new(false));
-        let none = Tools::new(c.clone(), None, None, Persona::Male);
+        let none = Tools::new(c.clone(), None, None, Persona::Male, false);
         let names: Vec<_> = none.defs().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
-        assert_eq!(names, ["switch_persona"]);
+        assert_eq!(names, ["switch_persona", "set_brief"]);
         let (msg, err) = none.turn("yes").run("ha_states", &json!({"search": ""}));
         assert!(err && msg.contains("not available"));
         let (_, err) = none.turn("yes").run("ask_claude_code", &json!({"task": "x"}));
         assert!(err);
-        let ha = Tools::new(c.clone(), None, Some(test_ha()), Persona::Male);
+        let ha = Tools::new(c.clone(), None, Some(test_ha()), Persona::Male, false);
         let names: Vec<_> = ha.defs().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
-        assert_eq!(names, ["switch_persona", "ha_states", "ha_call_service"]);
-        let both = Tools::new(c, Some("/nonexistent/claude".into()), Some(test_ha()), Persona::Male);
-        assert_eq!(both.defs().len(), 4);
+        assert_eq!(names, ["switch_persona", "set_brief", "forget_permissions", "ha_states", "ha_call_service"]);
+        let both = Tools::new(c, Some("/nonexistent/claude".into()), Some(test_ha()), Persona::Male, false);
+        assert_eq!(both.defs().len(), 6);
         for d in both.defs() {
             assert!(!d.to_string().contains("Sam"));
         }
@@ -530,7 +666,7 @@ mod tests {
 
     #[test]
     fn switch_persona_saves_and_queues() {
-        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, None, Persona::Male);
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, None, Persona::Male, false);
         let (msg, err) = tools.turn("hi").run("switch_persona", &json!({"persona": "male"}));
         assert!(!err && msg.contains("Already"));
         assert_eq!(tools.take_switch(), None);
@@ -567,8 +703,67 @@ mod tests {
     }
 
     #[test]
+    fn always_words() {
+        for y in ["always", "Yes, always.", "yes always", "always do that", "sure, always okay"] {
+            assert!(is_always(y), "{y}");
+        }
+        for n in ["always ask first", "no, not always", "don't always do that", "yes", "", "always check with me"] {
+            assert!(!is_always(n), "{n}");
+        }
+        assert!(!is_always("what do you always say when you start up in the morning"));
+    }
+
+    #[test]
+    fn claude_code_yes_survives_a_rephrased_task() {
+        let prev = ("ask_claude_code".to_string(), json!({"task": "what version is rex"}));
+        assert!(allowed(Some(&prev), "ask_claude_code", &json!({"task": "find the rex version"}), "yes"));
+        assert!(!allowed(Some(&prev), "ask_claude_code", &json!({"task": "x"}), "no"));
+    }
+
+    #[test]
+    fn always_is_remembered_per_service() {
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false)
+            .with_prefs("ha-always");
+        let call = json!({"domain": "light", "service": "turn_on", "entity_id": "light.x"});
+        let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
+        assert!(err && msg.starts_with("Not run"));
+        // "always" lets it through (it then fails at the fake token, past the gate) and saves it.
+        let (msg, _) = tools.turn("yes always").run("ha_call_service", &call);
+        assert!(!msg.starts_with("Not run"), "{msg}");
+        assert_eq!(tools.always_labels(), ["light.turn_on in Home Assistant"]);
+        // Next time no yes is needed, even for another light.
+        let other = json!({"domain": "light", "service": "turn_on", "entity_id": "light.y"});
+        let (msg, _) = tools.turn("turn on the other light").run("ha_call_service", &other);
+        assert!(!msg.starts_with("Not run"), "{msg}");
+        // A different service still asks.
+        let lock = json!({"domain": "lock", "service": "unlock", "entity_id": "lock.front"});
+        let (msg, err) = tools.turn("unlock the door").run("ha_call_service", &lock);
+        assert!(err && msg.starts_with("Not run"));
+        // Forget puts the gate back.
+        let (_, err) = tools.turn("ask first again").run("forget_permissions", &json!({}));
+        assert!(!err);
+        assert!(tools.always_labels().is_empty());
+        let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
+        assert!(err && msg.starts_with("Not run"));
+    }
+
+    #[test]
+    fn brief_by_voice_overrides_config() {
+        let tools =
+            Tools::new(Arc::new(AtomicBool::new(false)), None, None, Persona::Male, true).with_prefs("brief");
+        assert!(tools.brief());
+        let (_, err) = tools.turn("more detail please").run("set_brief", &json!({"on": false}));
+        assert!(!err);
+        assert!(!tools.brief());
+        let (_, err) = tools.turn("x").run("set_brief", &json!({"on": "yes"}));
+        assert!(err);
+        let (_, err) = tools.turn("x").run("forget_permissions", &json!({}));
+        assert!(err, "no gated tools, so nothing to forget");
+    }
+
+    #[test]
     fn pending_lasts_one_turn() {
-        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male);
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false);
         let call = json!({"domain": "light", "service": "turn_on", "entity_id": "light.x"});
         // Turn 1: not confirmed, gets parked. Never reaches the network.
         let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
@@ -582,7 +777,7 @@ mod tests {
 
     #[test]
     fn service_validation_blocks_before_network() {
-        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male);
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false);
         let t = Turn { tools: &tools, prev: None, user_text: String::new() };
         let bad = [
             json!({"domain": "hassio", "service": "host_shutdown", "entity_id": "a.b"}),

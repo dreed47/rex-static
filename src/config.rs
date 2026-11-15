@@ -35,6 +35,8 @@ pub struct Config {
     pub ha: Option<HaConf>,
     /// Home Assistant announcements over MQTT.
     pub mqtt: Option<MqttConf>,
+    /// Short replies by default. Saying "be brief" or "more detail" overrides it.
+    pub brief: bool,
 }
 
 /// The config, read once on first use.
@@ -164,6 +166,7 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
         claude_code: None,
         ha: None,
         mqtt: None,
+        brief: false,
     };
     let (mut ha_url, mut ha_pin, mut ha_token) = (None, None, home.join(".config/ha-token"));
     let (mut mqtt_url, mut mqtt_user) = (None, None);
@@ -203,6 +206,11 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
             "piper" => match abs_path(value, home) {
                 Some(p) => cfg.piper = p,
                 None => bad("needs an absolute path"),
+            },
+            "brief" => match value {
+                "yes" => cfg.brief = true,
+                "no" => cfg.brief = false,
+                _ => bad("use yes or no"),
             },
             "claude_code" => match abs_path(value, home) {
                 Some(p) => cfg.claude_code = Some(p),

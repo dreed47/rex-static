@@ -66,11 +66,20 @@ The file is `~/.config/rex-static/config`. See
 | `user_name` | Your name, so the persona can use it |
 | `model` | Claude model id (default `claude-haiku-5-5`) |
 | `face` | `auto` (built-in head), `plastic` or `photo` |
+| `brief` | `yes` for one-sentence replies (default `no`) |
 | `claude_code` | Path to `claude`; turns on the Claude Code tool |
 | `ha_url`, `ha_pin`, `ha_token_file` | Turn on the Home Assistant tool |
 | `mqtt_url`, `mqtt_user` | Turn on Home Assistant announcements |
 
 The app ignores the file if someone else owns it or others can write to it.
+
+Asking Claude Code and changing things in Home Assistant need your yes
+first. Answer "yes always" and it stops asking for that: for Claude Code,
+every question; for Home Assistant, that one service (for example
+`light.turn_on`). Say "ask first again" to undo all of them. Say "be brief"
+or "more detail" to change reply length. These choices are saved in
+`~/.local/share/rex-static/prefs`, which is ignored if others can write to
+it.
 
 Each persona keeps its own name and conversation history. Memory notes about
 you are shared between personas.

@@ -11,6 +11,7 @@ mod mannequin;
 mod memory;
 mod mqtt;
 mod persona;
+mod prefs;
 mod stt;
 mod tools;
 mod tts;
@@ -181,7 +182,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
     };
     let claude = llm::load_key().map(|k| llm::Claude::new(k, config::get().model.clone()));
     let cfg = config::get();
-    let tools = Arc::new(tools::Tools::new(rex.cancel.clone(), cfg.claude_code.clone(), cfg.ha.clone(), cfg.persona));
+    let tools = Arc::new(tools::Tools::new(rex.cancel.clone(), cfg.claude_code.clone(), cfg.ha.clone(), cfg.persona, cfg.brief));
     let notes_busy = Arc::new(AtomicBool::new(false));
     let key = cfg.persona.name_key();
     let mut who = persona::Who {
@@ -189,6 +190,8 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         persona: cfg.persona,
         user: cfg.user_name.clone(),
         tools: tools.set(),
+        brief: tools.brief(),
+        always: tools.always_labels(),
     };
 
     // Pre-render filler lines in the background so they play instantly.
@@ -258,6 +261,8 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         }
         let notes = mem.notes().map(|n| n.0).unwrap_or_default();
         let turns = mem.recent(12).unwrap_or_default();
+        who.brief = tools.brief();
+        who.always = tools.always_labels();
         let system = persona::system_prompt(&who, &notes);
         let (tx2, rx2) = mpsc::channel();
         let tool_used = Arc::new(AtomicBool::new(false));
@@ -288,9 +293,10 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
                 Ok(r) => break Some(r),
                 Err(mpsc::RecvTimeoutError::Timeout) if !rex.cancel.load(Ordering::Relaxed) => {
                     let waited = started.elapsed();
-                    let want = if tool_used.load(Ordering::Relaxed) || waited >= LONG_FILLER_AFTER {
+                    // Brief mode skips the "hmm" and waits for a tool.
+                    let want = if tool_used.load(Ordering::Relaxed) || (!who.brief && waited >= LONG_FILLER_AFTER) {
                         2
-                    } else if waited >= SHORT_FILLER_AFTER {
+                    } else if !who.brief && waited >= SHORT_FILLER_AFTER {
                         1
                     } else {
                         0
