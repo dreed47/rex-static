@@ -15,6 +15,7 @@ mod prefs;
 mod stt;
 mod tools;
 mod tts;
+mod wake;
 
 use ::rand::Rng;
 use ::rand::seq::IndexedRandom;
@@ -52,7 +53,14 @@ enum Job {
     /// Read out as is (from Home Assistant). Waits for current speech and
     /// stays out of the chat memory.
     Announce(String),
+    /// A clip the wake listener heard "hey" in. Answer true to record a
+    /// request now.
+    Wake(Vec<i16>, mpsc::Sender<bool>),
 }
+
+/// Command-line flag: record a request right after the greeting (set when
+/// "Hey <name>" switches persona).
+const LISTEN_FLAG: &str = "--listen";
 
 /// Most characters you can type in one message.
 const TYPE_MAX: usize = 500;
@@ -225,6 +233,44 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             rex.set(|s| s.phase = Phase::Idle);
             continue;
         }
+        // A wake check stays quiet: no "thinking" unless it's a real request.
+        let job = match job {
+            Job::Wake(pcm, reply) => {
+                let names: Vec<_> = persona::Persona::ALL
+                    .into_iter()
+                    .map(|p| (p, mem.setting(p.name_key()).unwrap_or_else(|| p.default_name().to_string())))
+                    .collect();
+                let prompt = format!("Hey {}.", names.iter().map(|n| n.1.as_str()).collect::<Vec<_>>().join(", hey "));
+                let text = stt.transcribe_with(&pcm, Some(&prompt)).unwrap_or_default();
+                if std::env::var_os("REX_WAKE_DEBUG").is_some() {
+                    eprintln!("rex-static: wake: heard {text:?}: {:?}", wake::parse(&text, &names));
+                }
+                match wake::parse(&text, &names) {
+                    None => {
+                        let _ = reply.send(false);
+                        continue;
+                    }
+                    Some(w) if w.persona != who.persona => {
+                        let _ = reply.send(false);
+                        match config::save_persona(w.persona) {
+                            Ok(()) => restart(true),
+                            Err(e) => eprintln!("rex-static: wake: {e}"),
+                        }
+                        continue;
+                    }
+                    Some(w) if w.rest < 2 => {
+                        let _ = reply.send(true);
+                        continue;
+                    }
+                    // "Hey Miles, what time is it?": the request is in there.
+                    Some(_) => {
+                        let _ = reply.send(false);
+                        Job::Say(text)
+                    }
+                }
+            }
+            j => j,
+        };
         rex.set(|s| {
             s.phase = Phase::Thinking;
             s.caption.clear();
@@ -232,7 +278,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         });
         let text = match job {
             Job::Say(t) => t,
-            Job::Announce(_) => unreachable!("handled above"),
+            Job::Announce(_) | Job::Wake(..) => unreachable!("handled above"),
             Job::Hear(pcm) => match stt.transcribe(&pcm) {
                 Ok(t) => t,
                 Err(e) => {
@@ -346,7 +392,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             }
         }
         if tools.take_switch().is_some() {
-            restart();
+            restart(false);
         }
         rex.set(|s| s.phase = Phase::Idle);
         maybe_update_notes(claude, &notes_busy, &who);
@@ -355,8 +401,9 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
 
 /// Replace this process with a fresh copy of the program, so a new persona
 /// loads from the config. The instance lock is close-on-exec, so it frees
-/// itself and the new copy takes it.
-fn restart() {
+/// itself and the new copy takes it. `listen`: record a request right
+/// after the greeting.
+fn restart(listen: bool) {
     use std::os::unix::process::CommandExt;
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -368,8 +415,16 @@ fn restart() {
         Some(s) => PathBuf::from(s),
         None => exe,
     };
-    let err = std::process::Command::new(&exe).args(std::env::args_os().skip(1)).exec();
+    let err = std::process::Command::new(&exe).args(restart_args(std::env::args_os().skip(1), listen)).exec();
     eprintln!("rex-static: restart {}: {err}", exe.display());
+}
+
+fn restart_args(args: impl Iterator<Item = std::ffi::OsString>, listen: bool) -> Vec<std::ffi::OsString> {
+    let mut out: Vec<_> = args.filter(|a| a != LISTEN_FLAG).collect();
+    if listen {
+        out.push(LISTEN_FLAG.into());
+    }
+    out
 }
 
 const VERT: &str = r#"#version 100
@@ -603,6 +658,30 @@ async fn run() {
     let cancel = Arc::new(AtomicBool::new(false));
     let level = Arc::new(AtomicU32::new(0));
     let (tx, rx) = mpsc::channel();
+    let ctl = Arc::new(wake::Ctl::default());
+    ctl.mute.store(true, Ordering::Relaxed);
+    if config::get().wake {
+        if std::env::args_os().any(|a| a == LISTEN_FLAG) {
+            ctl.arm.store(true, Ordering::Relaxed);
+        }
+        let (ctl, level, tx) = (ctl.clone(), level.clone(), tx.clone());
+        let model = models_dir().join(wake::MODEL_DIR);
+        thread::spawn(move || {
+            let check_tx = tx.clone();
+            wake::run(
+                ctl,
+                level,
+                model,
+                move |pcm| {
+                    let (t, r) = mpsc::channel();
+                    check_tx.send(Job::Wake(pcm, t)).ok().map(|_| r)
+                },
+                move |pcm| {
+                    let _ = tx.send(Job::Hear(pcm));
+                },
+            )
+        });
+    }
     {
         let rex = Rex {
             shared: shared.clone(),
@@ -810,7 +889,10 @@ async fn run() {
             }
         }
 
-        let mood = if rec.is_some() {
+        ctl.mute.store(rec.is_some() || s.phase != Phase::Idle, Ordering::Relaxed);
+        let asking = ctl.asking.load(Ordering::Relaxed);
+        let listening = rec.is_some() || asking;
+        let mood = if listening {
             Mood::Listening
         } else {
             match s.phase {
@@ -957,7 +1039,7 @@ async fn run() {
             }
         }
         let blink = (t * 2.0).fract() < 0.6;
-        if rec.is_some() {
+        if listening {
             if blink {
                 draw_circle(9.0, 9.0, 3.0, RED);
             }
@@ -1012,6 +1094,7 @@ async fn run() {
                 draw_caption(&format!("YOU: {}", s.heard), 1.0, Color::new(0.75, 0.75, 0.8, 1.0))
             }
             _ if rec.is_some() => draw_caption("Listening... let go of Space when done.", 0.0, GREEN),
+            _ if asking => draw_caption("Listening... pause when done.", 0.0, GREEN),
             _ if !s.caption.is_empty() && caption_fade > 0.0 => {
                 draw_caption(&s.caption, progress, Color::new(1.0, 1.0, 1.0, caption_fade))
             }
@@ -1019,7 +1102,7 @@ async fn run() {
         }
 
         // Pace frames ourselves, since vsync is off (see `conf`).
-        let busy = rec.is_some()
+        let busy = listening
             || !typed.is_empty()
             || matches!(s.phase, Phase::Speaking | Phase::Booting)
             || t < 1.5
@@ -1044,6 +1127,13 @@ async fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_adds_listen_once() {
+        let os = |v: &[&str]| v.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        assert_eq!(super::restart_args(os(&["--listen", "x"]).into_iter(), true), os(&["x", "--listen"]));
+        assert_eq!(super::restart_args(os(&["--listen"]).into_iter(), false), os(&[]));
+    }
 
     #[test]
     fn size_file_is_in_temp_folder() {

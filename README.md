@@ -23,11 +23,13 @@ other one.
 - `libsecret` (`/usr/bin/secret-tool`) for the API key
 - Rust, `uv`, `curl`, `cmake`, `clang`
 - An Anthropic API key
+- Optional, for the wake phrase: `vosk-api` (`/usr/lib/libvosk.so`)
 
 On Arch:
 
 ```sh
 sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang
+sudo pacman -S --needed vosk-api   # only for the wake phrase
 ```
 
 ## Set up
@@ -67,9 +69,17 @@ The file is `~/.config/rex-static/config`. See
 | `model` | Claude model id (default `claude-haiku-5-5`) |
 | `face` | `auto` (built-in head), `plastic` or `photo` |
 | `brief` | `yes` for one-sentence replies (default `no`) |
+| `wake` | `yes` to talk without Space: say "Hey Miles" (default `no`) |
 | `claude_code` | Path to `claude`; turns on the Claude Code tool |
 | `ha_url`, `ha_pin`, `ha_token_file` | Turn on the Home Assistant tool |
 | `mqtt_url`, `mqtt_user` | Turn on Home Assistant announcements |
+
+With `wake = yes`, say "Hey" and a persona's name: Rex, Roxy, Miles or
+Zosia, or whatever you renamed them to. Say it alone, wait for the beep,
+then talk; a pause of about a second ends it. Or say it all at once: "Hey
+Miles, what time is it?" Another persona's name switches to them first.
+Space still works. A small offline model (Vosk) listens for "hey" all the
+time; nothing leaves the machine until a request is heard.
 
 The app ignores the file if someone else owns it or others can write to it.
 

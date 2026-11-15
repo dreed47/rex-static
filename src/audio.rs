@@ -71,6 +71,39 @@ impl Drop for Recorder {
     }
 }
 
+/// An open-ended 16 kHz mono capture, read in fixed-size chunks.
+pub struct Stream {
+    child: Child,
+    out: std::process::ChildStdout,
+}
+
+impl Stream {
+    pub fn start() -> std::io::Result<Self> {
+        let mut child = Command::new(PW_CAT)
+            .args(["--record", "--raw", "--rate", "16000", "--channels", "1", "--format", "s16", "-"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let out = child.stdout.take().expect("piped stdout");
+        Ok(Self { child, out })
+    }
+
+    /// The next `samples` samples. Blocks; None when the stream ends.
+    pub fn read(&mut self, samples: usize) -> Option<Vec<i16>> {
+        let mut bytes = vec![0u8; samples * 2];
+        self.out.read_exact(&mut bytes).ok()?;
+        Some(bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect())
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Play mono s16 PCM, blocking until done or `cancel` is set.
 /// `on_start` runs right after the player process starts.
 pub fn play(samples: &[i16], rate: u32, cancel: &AtomicBool, on_start: impl FnOnce()) -> std::io::Result<()> {

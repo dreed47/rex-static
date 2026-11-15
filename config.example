@@ -24,6 +24,10 @@ persona = male
 # too, and that choice is remembered over this line.
 # brief = no
 
+# Wake phrase: say "Hey Miles" (or any persona's name) instead of holding
+# Space. Needs vosk-api (sudo pacman -S --needed vosk-api).
+# wake = no
+
 # Piper program (default ~/.local/bin/piper, from setup.sh)
 # piper = ~/.local/bin/piper
 

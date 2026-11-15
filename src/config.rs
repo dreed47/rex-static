@@ -37,6 +37,8 @@ pub struct Config {
     pub mqtt: Option<MqttConf>,
     /// Short replies by default. Saying "be brief" or "more detail" overrides it.
     pub brief: bool,
+    /// Listen for "Hey <name>" all the time (needs vosk-api).
+    pub wake: bool,
 }
 
 /// The config, read once on first use.
@@ -167,6 +169,7 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
         ha: None,
         mqtt: None,
         brief: false,
+        wake: false,
     };
     let (mut ha_url, mut ha_pin, mut ha_token) = (None, None, home.join(".config/ha-token"));
     let (mut mqtt_url, mut mqtt_user) = (None, None);
@@ -210,6 +213,11 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
             "brief" => match value {
                 "yes" => cfg.brief = true,
                 "no" => cfg.brief = false,
+                _ => bad("use yes or no"),
+            },
+            "wake" => match value {
+                "yes" => cfg.wake = true,
+                "no" => cfg.wake = false,
                 _ => bad("use yes or no"),
             },
             "claude_code" => match abs_path(value, home) {

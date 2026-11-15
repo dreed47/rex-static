@@ -19,6 +19,11 @@ impl Stt {
 
     /// 16 kHz mono PCM in, cleaned-up text out (may be empty).
     pub fn transcribe(&self, pcm: &[i16]) -> Result<String, String> {
+        self.transcribe_with(pcm, None)
+    }
+
+    /// Like [`Self::transcribe`], with a prompt that nudges spelling (names).
+    pub fn transcribe_with(&self, pcm: &[i16], prompt: Option<&str>) -> Result<String, String> {
         let mut audio: Vec<f32> = pcm.iter().map(|&s| s as f32 / 32768.0).collect();
         if audio.len() < RATE + RATE / 10 {
             audio.resize(RATE + RATE / 10, 0.0);
@@ -35,6 +40,9 @@ impl Stt {
         p.set_no_context(true);
         p.set_suppress_blank(true);
         p.set_suppress_nst(true);
+        if let Some(prompt) = prompt {
+            p.set_initial_prompt(prompt);
+        }
         state.full(p, &audio).map_err(|e| e.to_string())?;
         let mut text = String::new();
         for seg in state.as_iter() {

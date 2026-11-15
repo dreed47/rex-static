@@ -13,7 +13,7 @@ whisper_base="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 
 missing=()
 for p in cargo uv curl sha256sum; do command -v "$p" >/dev/null || missing+=("$p"); done
-for p in /usr/bin/pw-cat /usr/bin/curl /usr/bin/secret-tool; do [[ -x $p ]] || missing+=("$p"); done
+for p in /usr/bin/pw-cat /usr/bin/curl /usr/bin/secret-tool /usr/bin/bsdtar; do [[ -x $p ]] || missing+=("$p"); done
 command -v cmake >/dev/null || missing+=("cmake (whisper build)")
 command -v clang >/dev/null || missing+=("clang (whisper build)")
 if ((${#missing[@]})); then
@@ -50,6 +50,18 @@ fetch "$piper_base/hfc_male/medium/en_US-hfc_male-medium.onnx.json" en_US-hfc_ma
 fetch "$piper_base/amy/medium/en_US-amy-medium.onnx" en_US-amy-medium.onnx b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18
 fetch "$piper_base/amy/medium/en_US-amy-medium.onnx.json" en_US-amy-medium.onnx.json 95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77
 fetch "$whisper_base/ggml-base.en.bin" ggml-base.en.bin a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002
+
+# Wake phrase ("wake = yes"): a small Vosk model, unpacked once.
+vosk=vosk-model-small-en-us-0.15
+fetch "https://alphacephei.com/vosk/models/$vosk.zip" "$vosk.zip" 30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498
+if [[ ! -d $models/$vosk ]]; then
+  rm -rf "$models/$vosk.part"
+  mkdir "$models/$vosk.part"
+  /usr/bin/bsdtar -xf "$models/$vosk.zip" -C "$models/$vosk.part" --no-same-owner --no-same-permissions
+  mv "$models/$vosk.part/$vosk" "$models/$vosk"
+  rm -rf "$models/$vosk.part"
+fi
+[[ -e /usr/lib/libvosk.so ]] || echo "Note: the wake phrase needs vosk-api (sudo pacman -S --needed vosk-api)."
 
 if [[ ! -e $conf ]]; then
   mkdir -p "$(dirname "$conf")"
