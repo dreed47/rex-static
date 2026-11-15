@@ -8,8 +8,9 @@ Four personas:
 
 - **Rex Static** (male) and **Roxy Static** (female): the 80s look, with a
   CRT screen, glitches and a choppy, stuttering voice.
-- **Miles** (male) and **Zosia** (female): a modern look, with smooth motion,
-  soft lighting and a natural voice.
+- **Miles** (male) and **Zosia** (female): a modern look, with a natural
+  voice, lip sync from the voice's own sounds, real blinks and glances, and
+  head turns made from turned photos of the same face.
 
 Pick one in the config file, or ask the persona to switch (for example
 "switch to Zosia"). It saves the choice to the config and restarts as the
@@ -151,6 +152,12 @@ Put `rex.png`, `roxy.png`, `miles.png` or `clara.png` in `~/.local/share/rex-sta
 built-in head. It needs the same layout as the built-in image (face centred,
 looking forward), or the mouth and eyes won't line up.
 
+For Miles and Zosia, your own image gets the older look: a warped mouth and
+eyes and a mesh head turn. The built-in mouth, eye and turned-head images
+only fit the built-in photos. The scripts in `tools/` make them with
+[LivePortrait](https://github.com/KwaiVGI/LivePortrait); see the notes at the
+top of each script.
+
 ## Window
 
 The window starts at 375 × 375 logical pixels, which is 600 screen pixels
@@ -178,7 +185,8 @@ folder and never touch it.
 
 ## Credits
 
-Head images are AI-generated. Voices: Piper `en_US-ryan-high`,
+Head images are AI-generated. The mouth, eye and turned-head images for
+Miles and Zosia are made from them with LivePortrait. Voices: Piper `en_US-ryan-high`,
 `en_US-lessac-high`, `en_US-hfc_male-medium` and `en_US-amy-medium`. Speech recognition: whisper.cpp `base.en`.
 
 `setup.sh` downloads the voice and speech models; they aren't part of this
