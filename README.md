@@ -47,6 +47,11 @@ sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang
 launcher entry. After changing code, run `./setup.sh` again to reinstall
 (downloads are skipped when the files are already there).
 
+To update to the latest release, run `./update.sh`. It downloads that
+release's source to `~/.cache/rex-static`, then builds and installs it with
+its own `setup.sh`. It does nothing when you're already on the latest
+release; `./update.sh --force` rebuilds anyway.
+
 Only one copy runs at a time. Opening it again brings the open window to
 the front (on Hyprland).
 
