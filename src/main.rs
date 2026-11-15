@@ -95,15 +95,13 @@ impl Rex {
         if self.cancel.load(Ordering::Relaxed) {
             return;
         }
-        let text = clip.text.clone();
-        let samples = clip.samples.clone();
         self.set(|s| {
             s.phase = Phase::Speaking;
-            s.caption = text;
-            s.clip = Some(clip);
+            s.caption.clone_from(&clip.text);
+            s.clip = Some(clip.clone());
             s.clip_start = None;
         });
-        let r = audio::play(&samples, tts::RATE, &self.cancel, || {
+        let r = audio::play(&clip.samples, tts::RATE, &self.cancel, || {
             self.set(|s| s.clip_start = Some(Instant::now()))
         });
         if let Err(e) = r {
@@ -471,8 +469,13 @@ fn draw_caption(text: &str, progress: f32, color: Color) {
     }
 }
 
-/// Target frame time.
+/// Frame time while something moves fast: talking, listening, typing or a
+/// resize. About 60 fps.
 const FRAME: Duration = Duration::from_millis(16);
+/// Frame time when idle or thinking, to save CPU. The idle sway is slow, so
+/// 20 fps looks the same. Retro animates at 12 fps anyway.
+const FRAME_IDLE: Duration = Duration::from_millis(50);
+const FRAME_IDLE_RETRO: Duration = Duration::from_millis(83);
 
 fn conf() -> Conf {
     Conf {
@@ -1015,10 +1018,20 @@ async fn run() {
             _ => {}
         }
 
-        // About 60 fps, since vsync is off (see `conf`).
+        // Pace frames ourselves, since vsync is off (see `conf`).
+        let busy = rec.is_some()
+            || !typed.is_empty()
+            || matches!(s.phase, Phase::Speaking | Phase::Booting)
+            || t < 1.5
+            || t - size_at < 0.5;
+        let frame = match (busy, retro) {
+            (true, _) => FRAME,
+            (false, false) => FRAME_IDLE,
+            (false, true) => FRAME_IDLE_RETRO,
+        };
         let spent = frame_start.elapsed();
-        if spent < FRAME {
-            thread::sleep(FRAME - spent);
+        if spent < frame {
+            thread::sleep(frame - spent);
         }
         frame_start = Instant::now();
         next_frame().await;
