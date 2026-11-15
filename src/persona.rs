@@ -32,7 +32,7 @@ impl Persona {
             Self::Male => "Rex Static",
             Self::Female => "Roxy Static",
             Self::ModernMale => "Miles",
-            Self::ModernFemale => "Clara",
+            Self::ModernFemale => "Zosia",
         }
     }
 

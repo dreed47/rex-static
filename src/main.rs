@@ -459,7 +459,7 @@ fn draw_caption(text: &str, progress: f32, color: Color) {
     let shown = &lines[first..(first + 3).min(n)];
     let h = shown.len() as f32 * 29.0 + 10.0;
     let y0 = screen_height() - h - 6.0;
-    draw_rectangle(6.0, y0, screen_width() - 12.0, h, Color::new(0.0, 0.0, 0.0, 0.7));
+    draw_rectangle(6.0, y0, screen_width() - 12.0, h, Color::new(0.0, 0.0, 0.0, 0.7 * color.a));
     for (i, l) in shown.iter().enumerate() {
         draw_text(l, 12.0, y0 + 26.0 + i as f32 * 29.0, SIZE as f32, color);
     }
@@ -480,8 +480,8 @@ fn conf() -> Conf {
         platform: miniquad::conf::Platform {
             linux_backend: miniquad::conf::LinuxBackend::WaylandWithX11Fallback,
             linux_wm_class: "rex-static",
-            // Resize limits in logical px: 450 and 1400 screen pixels at 1.6 scale.
-            wayland_min_size: Some((282, 282)),
+            // Resize limits in logical px: 250 and 1400 screen pixels at 1.6 scale.
+            wayland_min_size: Some((156, 156)),
             wayland_max_size: Some((875, 875)),
             // No vsync: with it, eglSwapBuffers blocks while the window is
             // hidden (another workspace), Wayland pings go unanswered and
@@ -665,7 +665,11 @@ async fn run() {
     let mut sway = 1.0f32;
     // Side-photo turns: where the head is heading, how far it is, how fast
     // it moves, and when the next change is due.
-    const LOOK: f32 = 0.34;
+    const LOOK: f32 = 0.1;
+    // Seconds a caption stays after speech before it starts to fade.
+    const CAPTION_HOLD: f32 = 4.0;
+    let mut caption_seen = String::new();
+    let mut caption_at = 0.0f32;
     let mut look = 0.0f32;
     let mut look_yaw = 0.0f32;
     let mut look_v = 0.0f32;
@@ -828,12 +832,12 @@ async fn run() {
         face::draw_backdrop(&backdrop);
         match photo.as_mut() {
             Some(f) => {
-                face::draw_body(&pose, f.neck, f.collar, f.shirt, !retro);
+                f.draw_body(&pose, !retro);
                 let blink = f.blink(t);
                 // Turned far enough, morph to the side photo: both photos
                 // bend to one shared shape, the front one draws here, the
                 // side one into rt2, and that fades over the top.
-                let w = face::smoothstep(0.06, 0.24, pose.yaw.abs());
+                let w = face::smoothstep(0.04, 0.16, pose.yaw.abs());
                 match (sides.as_ref(), w > 0.01) {
                     (Some(views), true) => {
                         let right = pose.yaw > 0.0;
@@ -843,7 +847,7 @@ async fn run() {
                         face::draw_morph(f, &pose, side, &p2, w, false, blink);
                         set_camera(&cam2);
                         face::draw_backdrop(&backdrop);
-                        face::draw_body(&pose, f.neck, f.collar, f.shirt, true);
+                        f.draw_body(&pose, true);
                         face::draw_morph(f, &pose, side, &p2, w, true, blink);
                         set_camera(&cam);
                         mixer.set_uniform("strength", w);
@@ -908,7 +912,13 @@ async fn run() {
         );
         gl_use_default_material();
 
-        // Crisp captions on top.
+        // Crisp captions on top. Once she's done talking, a spoken line
+        // fades out after a few seconds so it doesn't sit over the face.
+        if s.phase != Phase::Idle || s.caption != caption_seen {
+            caption_seen.clone_from(&s.caption);
+            caption_at = t;
+        }
+        let caption_fade = 1.0 - face::smoothstep(CAPTION_HOLD, CAPTION_HOLD + 1.5, t - caption_at);
         let cursor = if blink { "_" } else { " " };
         match s.phase {
             _ if !typed.is_empty() => {
@@ -919,7 +929,9 @@ async fn run() {
                 draw_caption(&format!("YOU: {}", s.heard), 1.0, Color::new(0.75, 0.75, 0.8, 1.0))
             }
             _ if rec.is_some() => draw_caption("Listening... let go of Space when done.", 0.0, GREEN),
-            _ if !s.caption.is_empty() => draw_caption(&s.caption, progress, WHITE),
+            _ if !s.caption.is_empty() && caption_fade > 0.0 => {
+                draw_caption(&s.caption, progress, Color::new(1.0, 1.0, 1.0, caption_fade))
+            }
             _ => {}
         }
 

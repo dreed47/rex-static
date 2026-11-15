@@ -49,6 +49,9 @@ pub struct Spec {
     neck_at: (f32, f32),
     collar_at: (f32, f32),
     shirt: Option<Color>,
+    /// The photo shows a real neck and shirt below the chin, so draw those
+    /// from the photo instead of a made-up neck and collar.
+    body: bool,
 }
 
 /// The original `face.png` photo.
@@ -93,6 +96,7 @@ pub const PHOTO: Spec = Spec {
     neck_at: (92.0, 215.0),
     collar_at: (60.0, 345.0),
     shirt: None,
+    body: false,
 };
 
 /// The male head, `assets/rex.png` (611×694).
@@ -143,6 +147,7 @@ pub const GUIDE: Spec = Spec {
     neck_at: (262.0, 668.0),
     collar_at: (495.0, 655.0),
     shirt: Some(Color::new(0.12, 0.13, 0.17, 1.0)),
+    body: false,
 };
 
 /// The female head, `assets/roxy.png` (508×713), facing forward.
@@ -193,6 +198,7 @@ pub const ROXY: Spec = Spec {
     neck_at: (230.0, 600.0),
     collar_at: (150.0, 650.0),
     shirt: Some(Color::new(0.06, 0.06, 0.1, 1.0)),
+    body: false,
 };
 
 /// The modern male head, `assets/miles.png` (510×730), facing forward.
@@ -271,6 +277,7 @@ pub const MILES: Spec = Spec {
     neck_at: (255.0, 680.0),
     collar_at: (120.0, 700.0),
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
+    body: true,
 };
 
 /// The modern female head, `assets/clara.png` (510×730), facing forward.
@@ -349,6 +356,7 @@ pub const CLARA: Spec = Spec {
     neck_at: (254.0, 620.0),
     collar_at: (150.0, 680.0),
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
+    body: true,
 };
 
 // Side views of the modern personas. Each name is the screen side the face
@@ -394,20 +402,15 @@ pub const MILES_LEFT: Spec = Spec {
         (414.0, 494.0),
         (412.0, 515.0),
         (410.0, 538.0),
-        (411.0, 568.0),
-        (416.0, 612.0),
-        (406.0, 644.0),
-        (391.0, 675.0),
-        (367.0, 691.0),
-        (338.0, 691.0),
-        (310.0, 691.0),
-        (282.0, 691.0),
-        (256.0, 690.0),
-        (229.0, 691.0),
-        (201.0, 691.0),
-        (173.0, 691.0),
-        (154.0, 662.0),
-        (148.0, 615.0),
+        (398.0, 545.0),
+        (378.0, 565.0),
+        (348.0, 585.0),
+        (318.0, 604.0),
+        (287.0, 624.0),
+        (252.0, 639.0),
+        (216.0, 642.0),
+        (182.0, 636.0),
+        (158.0, 622.0),
         (137.0, 589.0),
         (124.0, 571.0),
         (113.0, 553.0),
@@ -448,6 +451,7 @@ pub const MILES_LEFT: Spec = Spec {
     neck_at: (255.0, 680.0),
     collar_at: (120.0, 700.0),
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
+    body: true,
 };
 
 /// `assets/miles-right.png` (510×730): the same head turned so the face points
@@ -490,20 +494,15 @@ pub const MILES_RIGHT: Spec = Spec {
         (438.0, 536.0),
         (430.0, 558.0),
         (419.0, 578.0),
-        (408.0, 601.0),
-        (402.0, 637.0),
-        (399.0, 691.0),
-        (367.0, 691.0),
-        (338.0, 691.0),
-        (310.0, 691.0),
-        (282.0, 691.0),
-        (256.0, 690.0),
-        (229.0, 691.0),
-        (201.0, 691.0),
-        (173.0, 691.0),
-        (147.0, 681.0),
-        (133.0, 646.0),
-        (127.0, 606.0),
+        (402.0, 592.0),
+        (382.0, 614.0),
+        (352.0, 634.0),
+        (312.0, 645.0),
+        (270.0, 647.0),
+        (232.0, 640.0),
+        (196.0, 630.0),
+        (162.0, 615.0),
+        (138.0, 592.0),
         (126.0, 568.0),
         (123.0, 541.0),
         (120.0, 519.0),
@@ -543,6 +542,7 @@ pub const MILES_RIGHT: Spec = Spec {
     neck_at: (255.0, 680.0),
     collar_at: (120.0, 700.0),
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
+    body: true,
 };
 
 /// `assets/clara-left.png` (510×730): the same head turned so the face points
@@ -584,18 +584,14 @@ pub const CLARA_LEFT: Spec = Spec {
         (392.0, 447.0),
         (388.0, 463.0),
         (385.0, 482.0),
-        (383.0, 505.0),
-        (384.0, 537.0),
-        (400.0, 603.0),
-        (386.0, 634.0),
-        (369.0, 666.0),
-        (345.0, 691.0),
-        (314.0, 691.0),
-        (284.0, 691.0),
-        (254.0, 690.0),
-        (224.0, 691.0),
-        (194.0, 691.0),
-        (163.0, 691.0),
+        (368.0, 503.0),
+        (345.0, 522.0),
+        (320.0, 538.0),
+        (296.0, 552.0),
+        (270.0, 566.0),
+        (245.0, 577.0),
+        (220.0, 581.0),
+        (195.0, 580.0),
         (172.0, 577.0),
         (156.0, 562.0),
         (142.0, 545.0),
@@ -638,6 +634,7 @@ pub const CLARA_LEFT: Spec = Spec {
     neck_at: (254.0, 620.0),
     collar_at: (150.0, 680.0),
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
+    body: true,
 };
 
 /// `assets/clara-right.png` (510×730): the same head turned so the face points
@@ -683,17 +680,13 @@ pub const CLARA_RIGHT: Spec = Spec {
         (383.0, 535.0),
         (369.0, 550.0),
         (357.0, 572.0),
-        (372.0, 675.0),
-        (345.0, 691.0),
-        (314.0, 691.0),
-        (284.0, 691.0),
-        (254.0, 690.0),
-        (224.0, 691.0),
-        (194.0, 691.0),
-        (163.0, 691.0),
-        (143.0, 657.0),
-        (129.0, 620.0),
-        (139.0, 550.0),
+        (330.0, 578.0),
+        (300.0, 581.0),
+        (270.0, 577.0),
+        (243.0, 567.0),
+        (215.0, 552.0),
+        (188.0, 535.0),
+        (162.0, 518.0),
         (140.0, 514.0),
         (137.0, 490.0),
         (134.0, 471.0),
@@ -733,6 +726,7 @@ pub const CLARA_RIGHT: Spec = Spec {
     neck_at: (254.0, 620.0),
     collar_at: (150.0, 680.0),
     shirt: Some(Color::new(0.07, 0.08, 0.12, 1.0)),
+    body: true,
 };
 
 
@@ -854,6 +848,9 @@ pub struct Face {
     pub skin_sides: bool,
     /// When the next blink starts; copied between views so they blink together.
     pub next_blink: f32,
+    /// The neck and shirt cut out of the photo, and the image row the
+    /// cut-out starts at; `None` when the photo has no usable body.
+    body: Option<(Texture2D, f32)>,
 }
 
 fn patch(img: &Image, x: f32, y: f32) -> Color {
@@ -872,6 +869,57 @@ fn patch(img: &Image, x: f32, y: f32) -> Color {
         }
     }
     Color::new(sum[0] / n, sum[1] / n, sum[2] / n, 1.0)
+}
+
+/// The lowest row of the head outline, in image pixels.
+fn chin_row(s: &Spec) -> f32 {
+    s.outline.iter().map(|p| p.1).fold(0.0f32, f32::max)
+}
+
+/// Cut the neck and shirt out of the photo: everything from just above the
+/// chin down, with the white background and the face itself see-through.
+/// Returns the cut-out and the image row it starts at.
+/// Photo rows mirrored below the bottom of a body photo.
+const BODY_EXT: u32 = 160;
+
+fn body_cutout(img: &Image, s: &Spec) -> Option<(Texture2D, f32)> {
+    let (w, h) = (img.width() as u32, img.height() as u32);
+    // Start at the mouth, not just above the chin: the neck in the photo
+    // reaches up beside the jaw, and a cut lower than that left a gap
+    // between the jaw and the neck. The face draws over the rest.
+    // `mouth_y` is in head units, so turn it into an image row first.
+    let mouth = s.cy + s.mouth_y * s.px;
+    let top = mouth.min(chin_row(s) - 50.0).max(0.0) as u32;
+    if top + 16 >= h {
+        return None;
+    }
+    let rim = trace(s);
+    let inside = |x: u32, y: u32| {
+        let v = vec2((x as f32 - s.cx) / s.px, (y as f32 - s.cy) / s.px);
+        v.length() < rim_at(&rim, v.y.atan2(v.x))
+    };
+    // The photo stops above the frame bottom. Mirror its last rows below it
+    // (at half speed, so they stay below the chin) and the shirt carries
+    // on with real texture and no fade line.
+    let ext = BODY_EXT.min(h - top);
+    let mut out = Image::gen_image_color(w as u16, (h + ext - top) as u16, Color::new(0.0, 0.0, 0.0, 0.0));
+    for x in 0..w {
+        // Under the face, carry the neck straight up from just below the
+        // jaw, so a turned head never shows a gap under the chin.
+        let below = (top..h).rev().find(|&y| inside(x, y)).map_or(top, |y| (y + 3).min(h - 1));
+        for y in top..h + ext {
+            let y0 = if y < h { y } else { h - 1 - (y - h) / 2 };
+            // Only behind the face: beside the jaw keep the photo as it is.
+            let c = img.get_pixel(x, if inside(x, y0) { y0.max(below) } else { y0 });
+            let lo = c.r.min(c.g).min(c.b);
+            let hi = c.r.max(c.g).max(c.b);
+            let backdrop = smoothstep(0.62, 0.8, lo) * (1.0 - smoothstep(0.06, 0.12, hi - lo));
+            out.set_pixel(x, y - top, Color::new(c.r, c.g, c.b, 1.0 - backdrop));
+        }
+    }
+    let tex = Texture2D::from_image(&out);
+    tex.set_filter(FilterMode::Linear);
+    Some((tex, top as f32))
 }
 
 impl Face {
@@ -902,6 +950,7 @@ impl Face {
             collar: at(spec.collar_at),
             shirt: spec.shirt.unwrap_or(SHIRT),
             next_blink: 2.0,
+            body: if spec.body { body_cutout(&img, spec) } else { None },
         })
     }
 
@@ -925,6 +974,58 @@ impl Face {
     /// A point on the face surface (head units), sitting `lift` above it.
     fn at(&self, view: &View, x: f32, y: f32, lift: f32) -> Vec2 {
         view.screen(view.world(vec3(x, y, self.depth(x, y) + lift)))
+    }
+
+    /// Neck and shirt. Photos that show their own draw them from the photo,
+    /// on plain shoulders that fill out to the frame edge; the others get
+    /// the drawn neck and collar.
+    pub fn draw_body(&self, pose: &Pose, soft: bool) {
+        let Some((tex, top)) = &self.body else {
+            draw_body(pose, self.neck, self.collar, self.shirt, soft);
+            return;
+        };
+        let shift = pose.dx * 0.3 + pose.yaw * 4.0;
+        draw_shoulders(shift, self.shirt);
+        let s = self.spec;
+        let view = View::new(pose);
+        let rest = View::new(&Pose::default());
+        let (w, h) = (self.size.x, self.size.y);
+        let bottom = top + tex.height();
+        let chin = chin_row(s);
+        let mut xs = vec![0.0, 12.0];
+        xs.extend((1..8).map(|i| w * i as f32 / 8.0));
+        xs.extend([w - 12.0, w]);
+        let mut ys = Vec::new();
+        let mut y = *top;
+        while y < bottom - 24.0 {
+            ys.push(y);
+            y += 8.0;
+        }
+        ys.extend([bottom - 24.0, bottom]);
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let n = xs.len() as u16;
+        for (i, &y) in ys.iter().enumerate() {
+            // The top of the neck goes with the head, the bottom stays with
+            // the shoulders.
+            let k = 1.0 - smoothstep(chin, h, y);
+            let hy = (y - s.cy) / s.px;
+            for (j, &x) in xs.iter().enumerate() {
+                let p = vec3((x - s.cx) / s.px, hy, 0.0);
+                let still = rest.screen(rest.world(p)) + vec2(shift, 0.0);
+                let q = still.lerp(view.screen(view.world(p)), k);
+                // Fade at the frame edges, where the drawn shoulders carry on.
+                let a = if j == 0 || j == xs.len() - 1 { 0.0 } else { 1.0 };
+                vertices.push(Vertex::new(q.x, q.y, 0.0, x / w, (y - top) / (bottom - top), Color::new(1.0, 1.0, 1.0, a)));
+            }
+            if i > 0 {
+                let (o, c) = ((i as u16 - 1) * n, i as u16 * n);
+                for j in 0..n - 1 {
+                    indices.extend_from_slice(&[o + j, o + j + 1, c + j + 1, o + j, c + j + 1, c + j]);
+                }
+            }
+        }
+        draw_mesh(&Mesh { vertices, indices, texture: Some(tex.clone()) });
     }
 
     /// Start or end a blink; true while the lids are down.
@@ -1285,13 +1386,22 @@ pub fn draw_backdrop(tex: &Texture2D) {
     draw_texture_ex(tex, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(200.0, 200.0)), ..Default::default() });
 }
 
+/// Plain shirt shoulders, shifted `x` across.
+fn draw_shoulders(x: f32, shirt: Color) {
+    let p = |px: f32, py: f32| vec2(px + x, py);
+    let fold = scale(shirt, 0.8);
+    draw_triangle(p(-5.0, 205.0), p(205.0, 205.0), p(35.0, 160.0), shirt);
+    draw_triangle(p(205.0, 205.0), p(165.0, 160.0), p(35.0, 160.0), shirt);
+    draw_triangle(p(-5.0, 205.0), p(35.0, 160.0), p(3.0, 178.0), fold);
+    draw_triangle(p(205.0, 205.0), p(165.0, 160.0), p(197.0, 178.0), fold);
+}
+
 /// Neck and an open-collar shirt.
 /// `soft` swaps the flat-shaded neck for a smooth gradient, for the modern
 /// personas that have no CRT to hide the bands.
 pub fn draw_body(pose: &Pose, neck: Color, collar: Color, shirt: Color, soft: bool) {
     let x = pose.dx * 0.3 + pose.yaw * 4.0;
     let p = |px: f32, py: f32| vec2(px + x, py);
-    let fold = scale(shirt, 0.8);
     // The head turns about a point behind the face, so the chin swings
     // further than the shoulders; the neck follows it part way.
     let x = if soft { x + pose.yaw * 14.0 } else { x };
@@ -1310,11 +1420,7 @@ pub fn draw_body(pose: &Pose, neck: Color, collar: Color, shirt: Color, soft: bo
         // Shadow under the chin.
         draw_rectangle(80.0 + x, 136.0, 40.0, 8.0, scale(neck, 0.6));
     }
-    // Shoulders.
-    draw_triangle(p(-5.0, 205.0), p(205.0, 205.0), p(35.0, 160.0), shirt);
-    draw_triangle(p(205.0, 205.0), p(165.0, 160.0), p(35.0, 160.0), shirt);
-    draw_triangle(p(-5.0, 205.0), p(35.0, 160.0), p(3.0, 178.0), fold);
-    draw_triangle(p(205.0, 205.0), p(165.0, 160.0), p(197.0, 178.0), fold);
+    draw_shoulders(pose.dx * 0.3 + pose.yaw * 4.0, shirt);
     // Open neck and collar points.
     draw_triangle(p(84.0, 156.0), p(116.0, 156.0), p(100.0, 192.0), if soft { scale(neck, 0.85) } else { neck });
     draw_triangle(p(84.0, 150.0), p(70.0, 170.0), p(97.0, 186.0), collar);

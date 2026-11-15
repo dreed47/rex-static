@@ -8,11 +8,11 @@ Four personas:
 
 - **Rex Static** (male) and **Roxy Static** (female): the 80s look, with a
   CRT screen, glitches and a choppy, stuttering voice.
-- **Miles** (male) and **Clara** (female): a modern look, with smooth motion,
+- **Miles** (male) and **Zosia** (female): a modern look, with smooth motion,
   soft lighting and a natural voice.
 
 Pick one in the config file, or ask the persona to switch (for example
-"switch to Clara"). It saves the choice to the config and restarts as the
+"switch to Zosia"). It saves the choice to the config and restarts as the
 other one.
 
 ![Rex Static and Roxy Static](docs/screenshot.png)
@@ -57,7 +57,7 @@ The file is `~/.config/rex-static/config`. See
 
 | Key | What it does |
 |---|---|
-| `persona` | `male` (Rex), `female` (Roxy), `modern-male` (Miles) or `modern-female` (Clara) |
+| `persona` | `male` (Rex), `female` (Roxy), `modern-male` (Miles) or `modern-female` (Zosia) |
 | `user_name` | Your name, so the persona can use it |
 | `model` | Claude model id (default `claude-haiku-5-5`) |
 | `face` | `auto` (built-in head), `plastic` or `photo` |
