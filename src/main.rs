@@ -471,9 +471,10 @@ const FRAME: Duration = Duration::from_millis(16);
 fn conf() -> Conf {
     Conf {
         window_title: config::get().persona.default_name().into(),
-        // Logical px: 375 x 1.6 monitor scale = 600 screen pixels.
-        window_width: 375,
-        window_height: 375,
+        // The last size used, in logical px (375 x 1.6 monitor scale = 600
+        // screen pixels the first time).
+        window_width: saved_size().0,
+        window_height: saved_size().1,
         window_resizable: true,
         high_dpi: false,
         // Native Wayland, so a left-click drag uses xdg_toplevel.move.
@@ -481,8 +482,8 @@ fn conf() -> Conf {
             linux_backend: miniquad::conf::LinuxBackend::WaylandWithX11Fallback,
             linux_wm_class: "rex-static",
             // Resize limits in logical px: 250 and 1400 screen pixels at 1.6 scale.
-            wayland_min_size: Some((156, 156)),
-            wayland_max_size: Some((875, 875)),
+            wayland_min_size: Some((MIN_SIZE, MIN_SIZE)),
+            wayland_max_size: Some((MAX_SIZE, MAX_SIZE)),
             // No vsync: with it, eglSwapBuffers blocks while the window is
             // hidden (another workspace), Wayland pings go unanswered and
             // Hyprland shows "not responding". The main loop paces frames.
@@ -491,6 +492,54 @@ fn conf() -> Conf {
         },
         ..Default::default()
     }
+}
+
+const MIN_SIZE: i32 = 156;
+const MAX_SIZE: i32 = 875;
+const DEFAULT_SIZE: i32 = 375;
+
+fn size_path() -> PathBuf {
+    memory::data_dir().join("window-size")
+}
+
+/// Read "width height" from the size file, kept inside the resize limits.
+fn parse_size(text: &str) -> Option<(i32, i32)> {
+    let mut it = text.split_whitespace().map(|n| n.parse::<i32>().ok());
+    let (w, h) = (it.next()??, it.next()??);
+    Some((w.clamp(MIN_SIZE, MAX_SIZE), h.clamp(MIN_SIZE, MAX_SIZE)))
+}
+
+/// The window size from the last run, or the default.
+fn saved_size() -> (i32, i32) {
+    std::fs::read_to_string(size_path())
+        .ok()
+        .and_then(|t| parse_size(&t))
+        .unwrap_or((DEFAULT_SIZE, DEFAULT_SIZE))
+}
+
+/// Remember the window size for the next start or persona switch.
+fn save_size(w: i32, h: i32) {
+    let dir = memory::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let tmp = dir.join("window-size.tmp");
+    if std::fs::write(&tmp, format!("{w} {h}\n")).is_ok() {
+        let _ = std::fs::rename(&tmp, size_path());
+    }
+}
+
+/// Ask Hyprland to resize this window, keeping it centred.
+fn ask_size((w, h): (i32, i32)) {
+    let pid = std::process::id();
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("/usr/bin/hyprctl")
+            .args([
+                "dispatch",
+                &format!("hl.dsp.window.resize({{ x = {w}, y = {h}, relative = false, window = \"pid:{pid}\" }})"),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    });
 }
 
 /// Holds an exclusive lock on a file in the data folder for the life of the
@@ -679,9 +728,34 @@ async fn run() {
     let start = Instant::now();
 
     let mut frame_start = Instant::now();
+    // Window size as last saved, and the size waiting to settle before a save.
+    let mut size_saved = saved_size();
+    let mut size_seen = size_saved;
+    let mut size_at = 0.0f32;
+    let mut size_asked = false;
     loop {
         let t = start.elapsed().as_secs_f32();
         let dt = get_frame_time();
+        // Save the size once a resize settles, so a persona switch (which
+        // restarts the program) or the next launch opens at the same size.
+        let size = (screen_width().round() as i32, screen_height().round() as i32);
+        if !size_asked && t > 0.2 {
+            // Hyprland opens a floating window at its smallest size, so ask
+            // for the saved one once the window is up.
+            size_asked = true;
+            if size != size_saved {
+                ask_size(size_saved);
+            }
+        }
+        if t < 1.0 {
+            // Wait for that resize; don't save the size the window opened at.
+        } else if size != size_seen {
+            size_seen = size;
+            size_at = t;
+        } else if size != size_saved && t - size_at > 0.3 {
+            save_size(size.0, size.1);
+            size_saved = size;
+        }
         if is_key_pressed(KeyCode::Escape) {
             if typed.is_empty() {
                 break;
@@ -946,4 +1020,30 @@ async fn run() {
     cancel.store(true, Ordering::SeqCst);
     drop(rec);
     thread::sleep(Duration::from_millis(100));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_file_is_in_temp_folder() {
+        assert!(size_path().starts_with(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn size_parses_and_clamps() {
+        assert_eq!(parse_size("300 280\n"), Some((300, 280)));
+        assert_eq!(parse_size("10 5000"), Some((MIN_SIZE, MAX_SIZE)));
+        assert_eq!(parse_size("300"), None);
+        assert_eq!(parse_size("wide tall"), None);
+        assert_eq!(parse_size(""), None);
+    }
+
+    #[test]
+    fn size_round_trips() {
+        save_size(250, 260);
+        assert_eq!(saved_size(), (250, 260));
+        let _ = std::fs::remove_file(size_path());
+    }
 }

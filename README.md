@@ -129,11 +129,14 @@ looking forward), or the mouth and eyes won't line up.
 
 ## Window
 
-The window is 375 × 375 logical pixels, which is 600 screen pixels at a 1.6
-monitor scale. Drag it with the left mouse button. On Hyprland, float it:
+The window starts at 375 × 375 logical pixels, which is 600 screen pixels
+at a 1.6 monitor scale. Drag it with the left mouse button. Resize it and it
+keeps that size across restarts and persona switches (saved in
+`~/.local/share/rex-static/window-size`). On Hyprland, float it, with no
+`size` in the rule so the saved size wins:
 
 ```lua
-o.window({ class = "^rex-static$" }, { float = true, center = true, keep_aspect_ratio = true, size = { 375, 375 } })
+o.window({ class = "^rex-static$" }, { float = true, center = true, keep_aspect_ratio = true })
 ```
 
 Or in `hyprland.conf` syntax:
