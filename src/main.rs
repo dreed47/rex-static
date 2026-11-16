@@ -793,28 +793,19 @@ async fn run() {
     )
     .expect("CRT shader");
 
-    // The persona's head image (a same-named file in the data folder
-    // overrides the built-in one), your own face.png, or the procedural
-    // mannequin when the config says plastic or an image won't load.
+    // The persona's built-in head image, or the procedural mannequin when
+    // the config says plastic or the image won't load.
     let cfg = config::get();
-    let want_photo = cfg.face == config::FaceChoice::Photo;
     let mut views: Option<[face::Face; 4]> = None;
     let mut photo = match cfg.face {
-        config::FaceChoice::Photo => face::Face::load(&memory::data_dir().join("face.png"), &face::PHOTO),
         config::FaceChoice::Plastic => None,
         config::FaceChoice::Auto => {
             let p = cfg.persona;
-            let own = memory::data_dir().join(p.image_file());
-            if own.is_file() {
-                face::Face::load(&own, p.face_spec())
-            } else {
-                // Turned views only match the built-in front.
-                views = load_views(p);
-                face::Face::from_bytes(p.image(), p.face_spec()).map(|mut f| {
-                    f.patches = patches::Patches::load(p.image(), &p.patches());
-                    f
-                })
-            }
+            views = load_views(p);
+            face::Face::from_bytes(p.image(), p.face_spec()).map(|mut f| {
+                f.patches = patches::Patches::load(p.image(), &p.patches());
+                f
+            })
         }
     };
     if !retro {
@@ -1078,10 +1069,6 @@ async fn run() {
                     }
                     None => face::draw_morph(f, &pose, f, &pose, 0.0, false, blink),
                 }
-            }
-            None if want_photo => {
-                face::draw_body(&pose, Color::new(0.8, 0.62, 0.5, 1.0), Color::new(0.92, 0.9, 0.84, 1.0), face::SHIRT, false);
-                head::draw_head(&pose, mood);
             }
             None => {
                 face::draw_body(&pose, mannequin::Mannequin::NECK, mannequin::Mannequin::COLLAR, face::SHIRT, false);

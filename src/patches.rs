@@ -308,7 +308,7 @@ mod builtin {
     #[test]
     fn every_persona_loads_its_frames() {
         for p in Persona::ALL {
-            assert!(super::Patches::load(p.image(), &p.patches()).is_some(), "{}", p.image_file());
+            assert!(super::Patches::load(p.image(), &p.patches()).is_some(), "{}", p.tag());
         }
     }
 }

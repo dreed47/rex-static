@@ -54,51 +54,6 @@ pub struct Spec {
     body: bool,
 }
 
-/// The original `face.png` photo.
-pub const PHOTO: Spec = Spec {
-    px: 125.0,
-    cx: 145.0,
-    cy: 190.0,
-    dome: 2.0,
-    relief: 1.0,
-    edge: 0.5,
-    shade: 1.0,
-    outline: &[
-        (145.0, 12.0),
-        (190.0, 18.0),
-        (230.0, 40.0),
-        (255.0, 80.0),
-        (266.0, 130.0),
-        (264.0, 175.0),
-        (260.0, 225.0),
-        (250.0, 258.0),
-        (235.0, 285.0),
-        (212.0, 308.0),
-        (182.0, 324.0),
-        (145.0, 330.0),
-        (110.0, 325.0),
-        (84.0, 310.0),
-        (64.0, 288.0),
-        (50.0, 260.0),
-        (32.0, 225.0),
-        (26.0, 175.0),
-        (25.0, 130.0),
-        (35.0, 80.0),
-        (62.0, 38.0),
-        (100.0, 16.0),
-    ],
-    eyes: [(-0.36, -0.215), (0.36, -0.2)],
-    nose: (0.0, 0.17),
-    mouth_y: 0.5,
-    mouth_x: (-0.12, 0.28),
-    hair_at: (145.0, 40.0),
-    lid_at: [(100.0, 147.0), (190.0, 149.0)],
-    neck_at: (92.0, 215.0),
-    collar_at: (60.0, 345.0),
-    shirt: None,
-    body: false,
-};
-
 /// The male head, `assets/rex.png` (611×694).
 pub const GUIDE: Spec = Spec {
     px: 236.0,
@@ -634,11 +589,6 @@ pub fn turned_image(portrait: &Image, v: &crate::persona::View) -> Option<Image>
 }
 
 impl Face {
-    /// Load the photo, or `None` if it's missing or unreadable.
-    pub fn load(path: &std::path::Path, spec: &'static Spec) -> Option<Self> {
-        Self::from_bytes(&std::fs::read(path).ok()?, spec)
-    }
-
     /// Build from encoded image bytes (PNG or JPEG).
     pub fn from_bytes(bytes: &[u8], spec: &'static Spec) -> Option<Self> {
         Self::from_image(&Image::from_file_with_format(bytes, None).ok()?, spec, spec.body)
@@ -1180,7 +1130,7 @@ mod tests {
 
     #[test]
     fn rim_follows_outline_all_round() {
-        for spec in [&PHOTO, &GUIDE, &ROXY, &MILES, &CLARA] {
+        for spec in [&GUIDE, &ROXY, &MILES, &CLARA] {
             let rim = trace(spec);
             for &(px, py) in spec.outline {
                 let v = vec2((px - spec.cx) / spec.px, (py - spec.cy) / spec.px);
@@ -1193,7 +1143,7 @@ mod tests {
 
     #[test]
     fn features_sit_inside_the_outline() {
-        for spec in [&PHOTO, &GUIDE, &ROXY, &MILES, &CLARA] {
+        for spec in [&GUIDE, &ROXY, &MILES, &CLARA] {
             let rim = trace(spec);
             let pts = [spec.eyes[0], spec.eyes[1], spec.nose, (spec.mouth_x.0, spec.mouth_y), (spec.mouth_x.1, spec.mouth_y)];
             for (x, y) in pts {
@@ -1233,7 +1183,7 @@ mod tests {
 
     #[test]
     fn jaw_only_below_mouth() {
-        let s = &PHOTO;
+        let s = &GUIDE;
         assert_eq!(s.jaw(0.08, 0.0), 0.0);
         assert!((s.jaw(0.08, 0.8) - 1.0).abs() < 1e-5);
         assert_eq!(s.jaw(0.9, 0.8), 0.0);

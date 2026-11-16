@@ -115,16 +115,7 @@ impl Persona {
         if self.retro() { 0.774 * self.pitch() } else { 0.95 }
     }
 
-    /// Head image file name (in the data folder it overrides the built-in one).
-    pub fn image_file(self) -> &'static str {
-        match self {
-            Self::Male => "rex.png",
-            Self::Female => "roxy.png",
-            Self::ModernMale => "miles.png",
-            Self::ModernFemale => "clara.png",
-        }
-    }
-
+    /// The built-in head image.
     pub fn image(self) -> &'static [u8] {
         match self {
             Self::Male => include_bytes!("../assets/rex.png"),

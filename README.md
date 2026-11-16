@@ -68,7 +68,7 @@ The file is `~/.config/rex-static/config`. See
 | `persona` | `male` (Rex), `female` (Roxy), `modern-male` (Miles) or `modern-female` (Zosia) |
 | `user_name` | Your name, so the persona can use it |
 | `model` | Claude model id (default `claude-haiku-5-5`) |
-| `face` | `auto` (built-in head), `plastic` or `photo` |
+| `face` | `auto` (built-in head) or `plastic` |
 | `brief` | `yes` for one-sentence replies (default `no`) |
 | `wake` | `yes` to talk without Space: say "Hey Miles" (default `no`) |
 | `claude_code` | Path to `claude`; turns on the Claude Code tool |
@@ -146,17 +146,14 @@ These need a rebuild (`cargo build --release`):
   tool call gets "let me check" straight away.
 - `SHORT_FILLERS`, `LONG_FILLERS` in `src/persona.rs`: the filler lines.
 
-## Your own head image
+## Making the face images
 
-Put `rex.png`, `roxy.png`, `miles.png` or `clara.png` in `~/.local/share/rex-static/` to replace the
-built-in head. It needs the same layout as the built-in image (face centred,
-looking forward), or the mouth and eyes won't line up.
+The mouth, eye and turned-head images for Miles and Zosia are made from the
+built-in photos with [LivePortrait](https://github.com/KwaiVGI/LivePortrait),
+using the scripts in `tools/`; see the notes at the top of each script.
 
-For Miles and Zosia, your own image gets the older look: a warped mouth and
-eyes and a mesh head turn. The built-in mouth, eye and turned-head images
-only fit the built-in photos. The scripts in `tools/` make them with
-[LivePortrait](https://github.com/KwaiVGI/LivePortrait); see the notes at the
-top of each script.
+Rex and Roxy keep the warped mouth and mesh head turn on purpose: it suits
+their choppy 80s look.
 
 ## Window
 

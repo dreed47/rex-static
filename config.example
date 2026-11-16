@@ -14,10 +14,8 @@ persona = male
 # the models page in the Anthropic docs for ids.
 # model = claude-haiku-5-5
 
-# auto: the persona's built-in head (put rex.png, roxy.png, miles.png or
-#       clara.png in ~/.local/share/rex-static to use your own image instead)
+# auto: the persona's built-in head
 # plastic: procedural mannequin, no image
-# photo: ~/.local/share/rex-static/face.png
 # face = auto
 
 # Short, one-sentence replies. Saying "be brief" or "more detail" changes it

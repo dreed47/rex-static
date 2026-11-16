@@ -14,13 +14,10 @@ use std::sync::OnceLock;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FaceChoice {
-    /// The persona's head image (a `<data>/rex.png` or `roxy.png` file
-    /// overrides the built-in one).
+    /// The persona's built-in head image.
     Auto,
     /// The procedural mannequin, no image.
     Plastic,
-    /// Your own `<data>/face.png`, laid out like the original photo.
-    Photo,
 }
 
 #[derive(Clone, Debug)]
@@ -203,8 +200,7 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
             "face" => match value {
                 "auto" => cfg.face = FaceChoice::Auto,
                 "plastic" => cfg.face = FaceChoice::Plastic,
-                "photo" => cfg.face = FaceChoice::Photo,
-                _ => bad("use auto, plastic or photo"),
+                _ => bad("use auto or plastic"),
             },
             "piper" => match abs_path(value, home) {
                 Some(p) => cfg.piper = p,
