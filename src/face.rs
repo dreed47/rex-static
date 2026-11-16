@@ -466,8 +466,16 @@ fn chin_row(s: &Spec) -> f32 {
 /// Cut the neck and shirt out of the photo: everything from just above the
 /// chin down, with the white background and the face itself see-through.
 /// Returns the cut-out and the image row it starts at.
-/// Photo rows mirrored below the bottom of a body photo.
-const BODY_EXT: u32 = 160;
+/// Rows made up below the bottom of a body photo.
+const BODY_EXT: u32 = 220;
+/// Columns made up beside a body photo, so the shoulders reach the frame.
+const BODY_PAD: u32 = 260;
+
+/// `x` bounced back and forth between 0 and `n`.
+fn pingpong(x: u32, n: u32) -> u32 {
+    let m = x % (2 * n);
+    if m < n { m } else { 2 * n - 1 - m }
+}
 
 fn body_cutout(img: &Image, s: &Spec) -> Option<(Texture2D, f32)> {
     let (w, h) = (img.width() as u32, img.height() as u32);
@@ -485,28 +493,170 @@ fn body_cutout(img: &Image, s: &Spec) -> Option<(Texture2D, f32)> {
         let v = vec2((x as f32 - s.cx) / s.px, (y as f32 - s.cy) / s.px);
         v.length() < rim_at(&rim, v.y.atan2(v.x))
     };
-    // The photo stops above the frame bottom. Mirror its last rows below it
-    // (at half speed, so they stay below the chin) and the shirt carries
-    // on with real texture and no fade line.
-    let ext = BODY_EXT.min(h - top);
-    let mut out = Image::gen_image_color(w as u16, (h + ext - top) as u16, Color::new(0.0, 0.0, 0.0, 0.0));
-    for x in 0..w {
+    let backdrop = |c: Color| {
+        let lo = c.r.min(c.g).min(c.b);
+        let hi = c.r.max(c.g).max(c.b);
+        smoothstep(0.62, 0.8, lo) * (1.0 - smoothstep(0.06, 0.12, hi - lo))
+    };
+    let chin = (chin_row(s) as u32).min(h - 1);
+    // The photo stops short of the frame. Below it, carry on with its last
+    // rows, bounced so there is texture but no mirrored neck, and drawn in
+    // towards the middle so the open collar closes into a V. Beside it,
+    // carry the edge columns on down the slope of the shoulders.
+    // The rows carried on are the average of the photo's last few, as
+    // repeating real rows showed as stripes. The seam fades over the
+    // first few made-up rows.
+    let ext = BODY_EXT;
+    const LAST: u32 = 16;
+    let avg: Vec<Color> = (0..w)
+        .map(|x| {
+            let mut c = Color::new(0.0, 0.0, 0.0, 1.0);
+            // Blurred across too, to soften streaks.
+            let xs = x.saturating_sub(3)..(x + 4).min(w);
+            let n = (LAST * xs.len() as u32) as f32;
+            for y in h - LAST..h {
+                for x in xs.clone() {
+                    let p = img.get_pixel(x, y);
+                    c.r += p.r / n;
+                    c.g += p.g / n;
+                    c.b += p.b / n;
+                }
+            }
+            c
+        })
+        .collect();
+    let below_photo = |x: f32, e: u32| {
+        let k = 1.0 + 3.0 * e as f32 / ext as f32;
+        let x0 = (s.cx + (x - s.cx) * k).clamp(0.0, (w - 1) as f32) as u32;
+        let a = avg[x0 as usize];
+        let t = (e as f32 / LAST as f32).min(1.0);
+        let p = img.get_pixel(x0, h - 1 - e.min(LAST - 1) / 2);
+        Color::new(p.r + (a.r - p.r) * t, p.g + (a.g - p.g) * t, p.b + (a.b - p.b) * t, 1.0)
+    };
+    // Top of the shirt in each column near the photo's sides.
+    let shirt_top = |x: u32| (chin..h).find(|&y| backdrop(img.get_pixel(x, y)) < 0.5).unwrap_or(h) as f32;
+    const SIDE: u32 = 32;
+    let slope = |edge: u32, inner: u32| ((shirt_top(edge) - shirt_top(inner)) / SIDE as f32).clamp(0.3, 1.0);
+    let (slope_l, slope_r) = (slope(0, SIDE), slope(w - 1, w - 1 - SIDE));
+    let beside = |d: u32, y: u32, left: bool| -> Option<Color> {
+        let i = pingpong(d, SIDE);
+        let (xs, edge, k) = if left { (i, 0, slope_l) } else { (w - 1 - i, w - 1, slope_r) };
+        let shift = shirt_top(edge) + k * d as f32 - shirt_top(xs);
+        let y0 = y as f32 - shift;
+        if y0 < 0.0 {
+            return None;
+        }
+        let y0 = y0 as u32;
+        Some(if y0 < h { img.get_pixel(xs, y0) } else { below_photo(xs as f32, y0 - h) })
+    };
+    let ow = w + 2 * BODY_PAD;
+    let mut out = Image::gen_image_color(ow as u16, (h + ext - top) as u16, Color::new(0.0, 0.0, 0.0, 0.0));
+    for ox in 0..ow {
+        let put = |out: &mut Image, y: u32, c: Color| out.set_pixel(ox, y - top, Color::new(c.r, c.g, c.b, 1.0 - backdrop(c)));
+        if ox < BODY_PAD || ox >= BODY_PAD + w {
+            let left = ox < BODY_PAD;
+            let d = if left { BODY_PAD - ox } else { ox - BODY_PAD - w + 1 };
+            for y in top..h + ext {
+                if let Some(c) = beside(d, y, left) {
+                    put(&mut out, y, c);
+                }
+            }
+            continue;
+        }
+        let x = ox - BODY_PAD;
         // Under the face, carry the neck straight up from just below the
-        // jaw, so a turned head never shows a gap under the chin.
+        // jaw, so a turned head never shows a gap under the chin. Only where
+        // there is neck: at the sides of the jaw the pixel below is jaw edge
+        // over the backdrop, and carried up it showed as a skin-coloured
+        // wedge beside a turned jaw. Above the chin, keep only the solid run
+        // that reaches down to the chin row (neck, collar or hair); the
+        // jaw's own edge just outside the outline goes, as it showed as a
+        // thin line beside a turned jaw.
         let below = (top..h).rev().find(|&y| inside(x, y)).map_or(top, |y| (y + 3).min(h - 1));
+        let mut run = chin + 1;
+        while run > top && backdrop(img.get_pixel(x, run - 1)) < 0.5 {
+            run -= 1;
+        }
+        let neck = run <= below;
         for y in top..h + ext {
-            let y0 = if y < h { y } else { h - 1 - (y - h) / 2 };
-            // Only behind the face: beside the jaw keep the photo as it is.
-            let c = img.get_pixel(x, if inside(x, y0) { y0.max(below) } else { y0 });
-            let lo = c.r.min(c.g).min(c.b);
-            let hi = c.r.max(c.g).max(c.b);
-            let backdrop = smoothstep(0.62, 0.8, lo) * (1.0 - smoothstep(0.06, 0.12, hi - lo));
-            out.set_pixel(x, y - top, Color::new(c.r, c.g, c.b, 1.0 - backdrop));
+            let c = if y >= h {
+                below_photo(x as f32, y - h)
+            } else if inside(x, y) {
+                if !neck && y < below {
+                    continue;
+                }
+                img.get_pixel(x, y.max(below))
+            } else if y < run {
+                continue;
+            } else {
+                // Beside the jaw keep the photo as it is.
+                img.get_pixel(x, y)
+            };
+            put(&mut out, y, c);
         }
     }
+    smooth_chest(&mut out, (chin_row(s) + 0.25 * s.px) as u32 - top);
     let tex = Texture2D::from_image(&out);
     tex.set_filter(FilterMode::Linear);
     Some((tex, top as f32))
+}
+
+/// How much a colour looks like skin rather than shirt or backdrop.
+fn skin(c: Color) -> f32 {
+    smoothstep(0.06, 0.14, c.r - c.b) * smoothstep(0.2, 0.35, c.r)
+}
+
+/// From row `from` of a body cut-out down, swap the skin for smooth skin:
+/// the photo's chest ends near the collarbone, and anything carried on
+/// below it showed as streaks. The colour comes from the neck just above,
+/// blurred across so it keeps only soft shading, and fades in over a few
+/// rows. The shirt stays as it is.
+fn smooth_chest(out: &mut Image, from: u32) {
+    const BAND: u32 = 20;
+    const FADE: f32 = 24.0;
+    const BLUR: i32 = 64;
+    let (w, h) = (out.width() as u32, out.height() as u32);
+    if from < BAND || from >= h {
+        return;
+    }
+    // Skin colour in each column, from the band above `from`.
+    let mut col = vec![(Vec3::ZERO, 0.0f32); w as usize];
+    for x in 0..w {
+        for y in from - BAND..from {
+            let c = out.get_pixel(x, y);
+            let k = skin(c) * c.a;
+            col[x as usize].0 += vec3(c.r, c.g, c.b) * k;
+            col[x as usize].1 += k;
+        }
+    }
+    let total = col.iter().fold((Vec3::ZERO, 0.0), |a, c| (a.0 + c.0, a.1 + c.1));
+    if total.1 < 1.0 {
+        return;
+    }
+    let mean = total.0 / total.1;
+    // Blurred across; columns with little skin lean on the mean.
+    let tone: Vec<Vec3> = (0..w as i32)
+        .map(|x| {
+            let (mut sum, mut n) = (mean * 4.0, 4.0);
+            for i in (x - BLUR).max(0)..(x + BLUR + 1).min(w as i32) {
+                sum += col[i as usize].0;
+                n += col[i as usize].1;
+            }
+            sum / n
+        })
+        .collect();
+    for y in from..h {
+        let t = ((y - from) as f32 / FADE).min(1.0);
+        for x in 0..w {
+            let c = out.get_pixel(x, y);
+            let k = skin(c) * t;
+            if k <= 0.0 {
+                continue;
+            }
+            let s = tone[x as usize];
+            out.set_pixel(x, y, Color::new(c.r + (s.x - c.r) * k, c.g + (s.y - c.g) * k, c.b + (s.z - c.b) * k, c.a));
+        }
+    }
 }
 
 /// A turned view of a built-in portrait: the view's face crop pasted over
@@ -643,7 +793,7 @@ impl Face {
     }
 
     /// Neck and shirt. Photos that show their own draw them from the photo,
-    /// on plain shoulders that fill out to the frame edge; the others get
+    /// carried on out to the frame edge; the others get
     /// the drawn neck and collar.
     pub fn draw_body(&self, pose: &Pose, soft: bool) {
         let Some((tex, top)) = &self.body else {
@@ -651,16 +801,15 @@ impl Face {
             return;
         };
         let shift = pose.dx * 0.3 + pose.yaw * 4.0;
-        draw_shoulders(shift, self.shirt);
         let s = self.spec;
         let view = View::new(pose);
         let rest = View::new(&Pose::default());
         let (w, h) = (self.size.x, self.size.y);
         let bottom = top + tex.height();
         let chin = chin_row(s);
-        let mut xs = vec![0.0, 12.0];
-        xs.extend((1..8).map(|i| w * i as f32 / 8.0));
-        xs.extend([w - 12.0, w]);
+        // The cut-out reaches `BODY_PAD` past the photo on both sides.
+        let pad = BODY_PAD as f32;
+        let xs: Vec<f32> = (0..=16).map(|i| -pad + (w + 2.0 * pad) * i as f32 / 16.0).collect();
         let mut ys = Vec::new();
         let mut y = *top;
         while y < bottom - 24.0 {
@@ -676,13 +825,12 @@ impl Face {
             // the shoulders.
             let k = 1.0 - smoothstep(chin, h, y);
             let hy = (y - s.cy) / s.px;
-            for (j, &x) in xs.iter().enumerate() {
+            for &x in &xs {
                 let p = vec3((x - s.cx) / s.px, hy, 0.0);
                 let still = rest.screen(rest.world(p)) + vec2(shift, 0.0);
                 let q = still.lerp(view.screen(view.world(p)), k);
-                // Fade at the frame edges, where the drawn shoulders carry on.
-                let a = if j == 0 || j == xs.len() - 1 { 0.0 } else { 1.0 };
-                vertices.push(Vertex::new(q.x, q.y, 0.0, x / w, (y - top) / (bottom - top), Color::new(1.0, 1.0, 1.0, a)));
+                let u = (x + pad) / (w + 2.0 * pad);
+                vertices.push(Vertex::new(q.x, q.y, 0.0, u, (y - top) / (bottom - top), WHITE));
             }
             if i > 0 {
                 let (o, c) = ((i as u16 - 1) * n, i as u16 * n);
