@@ -139,9 +139,12 @@ pub fn parse(text: &str, names: &[(Persona, String)]) -> Option<Wake> {
     Some(Wake { persona, rest: after.len() - used })
 }
 
-/// Does a Vosk transcript have the word "hey"?
+/// Does a Vosk transcript have the word "hey"? A name starting with an s or
+/// z sound ("Hey Zosia") blends into it, and Vosk hears "he's osha" or
+/// "hayes osha", so those count too. Whisper still checks the name, so an
+/// ordinary "he's" only costs one Whisper run.
 pub fn has_hey(text: &str) -> bool {
-    text.split_whitespace().any(|w| matches!(w, "hey" | "hay"))
+    text.split_whitespace().any(|w| matches!(w, "hey" | "hay" | "he's" | "hey's" | "hayes" | "hays" | "haze"))
 }
 
 type ModelNew = unsafe extern "C" fn(*const c_char) -> *mut c_void;
@@ -521,6 +524,8 @@ mod tests {
     fn hey_in_vosk_text() {
         assert!(has_hey("hey miles"));
         assert!(has_hey("okay hey social"));
+        assert!(has_hey("he's osha what time is it"));
+        assert!(has_hey("hayes osha"));
         assert!(!has_hey("they said it was fine"));
     }
 }
