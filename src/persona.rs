@@ -59,6 +59,15 @@ pub enum Persona {
     ModernFemale,
 }
 
+/// Which speech engine a persona uses, and its voice.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Speech {
+    /// A Piper voice model file in the models folder.
+    Piper(&'static str),
+    /// A voice name in Kokoro's voices file (an `a` prefix is US English).
+    Kokoro(&'static str),
+}
+
 impl Persona {
     pub const ALL: [Persona; 4] = [Self::Male, Self::Female, Self::ModernMale, Self::ModernFemale];
 
@@ -92,13 +101,13 @@ impl Persona {
         }
     }
 
-    /// Piper voice model file in the models folder.
-    pub fn voice_file(self) -> &'static str {
+    /// The speech engine and voice.
+    pub fn speech(self) -> Speech {
         match self {
-            Self::Male => "en_US-ryan-high.onnx",
-            Self::Female => "en_US-lessac-high.onnx",
-            Self::ModernMale => "en_US-hfc_male-medium.onnx",
-            Self::ModernFemale => "en_US-amy-medium.onnx",
+            Self::Male => Speech::Piper("en_US-ryan-high.onnx"),
+            Self::Female => Speech::Piper("en_US-lessac-high.onnx"),
+            Self::ModernMale => Speech::Kokoro("am_puck"),
+            Self::ModernFemale => Speech::Kokoro("af_aoede"),
         }
     }
 
@@ -110,9 +119,9 @@ impl Persona {
         }
     }
 
-    /// Piper length scale: below 1 talks faster.
+    /// Length scale: below 1 talks faster (Kokoro gets its inverse as speed).
     pub fn pace(self) -> f32 {
-        if self.retro() { 0.774 * self.pitch() } else { 0.95 }
+        if self.retro() { 0.774 * self.pitch() } else { 1.0 }
     }
 
     /// The built-in head image.

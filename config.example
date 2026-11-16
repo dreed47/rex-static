@@ -3,7 +3,7 @@
 # The file must be yours and not writable by others, or it's ignored.
 
 # male (Rex Static, Ryan voice), female (Roxy Static, Lessac voice),
-# modern-male (Miles, HFC male voice) or modern-female (Zosia, Amy voice)
+# modern-male (Miles, Kokoro Puck voice) or modern-female (Zosia, Kokoro Aoede voice)
 persona = male
 
 # Your name, so the persona can use it. Leave out to stay generic.

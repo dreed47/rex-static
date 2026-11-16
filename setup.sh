@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up Rex Static: check tools, install Piper, download voice and speech
+# Set up Rex Static: check tools, install Piper and Kokoro, download voice and speech
 # models (checked against known hashes), write an example config, build.
 # Safe to run again: existing models and config are kept.
 set -euo pipefail
@@ -35,6 +35,15 @@ if [[ -x $piper_py ]] && ! "$piper_py" -I -c "import onnx" 2>/dev/null; then
   uv pip install --python "$piper_py" onnx || echo "onnx install failed; lip sync falls back to loudness" >&2
 fi
 
+# Kokoro runs in its own venv, so its packages never touch Piper's.
+kokoro_venv="$data/kokoro"
+if ! "$kokoro_venv/bin/python" -I -c "import kokoro_onnx" 2>/dev/null; then
+  echo "Installing Kokoro..."
+  mkdir -p "$data"
+  uv venv --quiet --allow-existing --python 3.12 "$kokoro_venv"
+  uv pip install --quiet --python "$kokoro_venv/bin/python" "kokoro-onnx==0.6.1"
+fi
+
 mkdir -p "$models"
 fetch() { # url name sha256
   local dest="$models/$2"
@@ -53,10 +62,11 @@ fetch "$piper_base/ryan/high/en_US-ryan-high.onnx" en_US-ryan-high.onnx b3990d76
 fetch "$piper_base/ryan/high/en_US-ryan-high.onnx.json" en_US-ryan-high.onnx.json c6d3b98f08315cb4bebf0d49d50fc4ff491b503c64b940cd3d5ca28543b48011
 fetch "$piper_base/lessac/high/en_US-lessac-high.onnx" en_US-lessac-high.onnx 4cabf7c3a638017137f34a1516522032d4fe3f38228a843cc9b764ddcbcd9e09
 fetch "$piper_base/lessac/high/en_US-lessac-high.onnx.json" en_US-lessac-high.onnx.json db42b97d9859f257bc1561b8ed980e7fb2398402050a74ddd6cbec931a92412f
-fetch "$piper_base/hfc_male/medium/en_US-hfc_male-medium.onnx" en_US-hfc_male-medium.onnx d11e403a02bdf5a670c877b3dc56e0e1c8cece6fb30289586314dffdc0a78cb0
-fetch "$piper_base/hfc_male/medium/en_US-hfc_male-medium.onnx.json" en_US-hfc_male-medium.onnx.json f66847424aed0bf99ecbb5d7cfde47c0a906f426a0daf7c46f305e7d21afd886
-fetch "$piper_base/amy/medium/en_US-amy-medium.onnx" en_US-amy-medium.onnx b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18
-fetch "$piper_base/amy/medium/en_US-amy-medium.onnx.json" en_US-amy-medium.onnx.json 95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77
+# Kokoro voices for Miles and Zosia. The v1.1 release's export of the v1.0
+# model reports phoneme durations, which lip sync needs.
+kokoro_base="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1"
+fetch "$kokoro_base/kokoro-v1.0.onnx" kokoro-v1.0.onnx beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a
+fetch "$kokoro_base/voices-v1.0.bin" voices-v1.0.bin bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d
 fetch "$whisper_base/ggml-base.en.bin" ggml-base.en.bin a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002
 
 # Wake phrase ("wake = yes"): a small Vosk model, unpacked once.

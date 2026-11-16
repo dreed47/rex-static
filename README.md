@@ -2,7 +2,7 @@
 
 A glitchy, slightly plastic digital person who lives in a small window on
 your Linux desktop. Hold the space bar to talk, or type. Answers come from
-Claude and are spoken with a local Piper voice.
+Claude and are spoken with a local voice (Piper or Kokoro).
 
 Four personas:
 
@@ -35,8 +35,8 @@ sudo pacman -S --needed vosk-api   # only for the wake phrase
 
 ## Set up
 
-1. Run `./setup.sh`. It installs Piper, downloads the voice and speech
-   models (about 380 MB, hash-checked), writes an example config and builds.
+1. Run `./setup.sh`. It installs Piper and Kokoro, downloads the voice and
+   speech models (about 600 MB, hash-checked), writes an example config and builds.
 2. Store your Anthropic key:
 
    ```sh
@@ -183,15 +183,15 @@ folder and never touch it.
 ## Credits
 
 Head images are AI-generated. The mouth, eye and turned-head images for
-Miles and Zosia are made from them with LivePortrait. Voices: Piper `en_US-ryan-high`,
-`en_US-lessac-high`, `en_US-hfc_male-medium` and `en_US-amy-medium`. Speech recognition: whisper.cpp `base.en`.
+Miles and Zosia are made from them with LivePortrait. Voices: Piper `en_US-ryan-high`
+and `en_US-lessac-high`, and Kokoro-82M `am_puck` and `af_aoede`. Speech recognition: whisper.cpp `base.en`.
 
 `setup.sh` downloads the voice and speech models; they aren't part of this
 repo and have their own licences. See the model cards for
 [ryan](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/ryan/high/MODEL_CARD),
 [lessac](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/lessac/high/MODEL_CARD),
-[hfc_male](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/hfc_male/medium/MODEL_CARD),
-[amy](https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/amy/medium/MODEL_CARD)
+[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) (Apache-2.0, run with
+[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx))
 and [whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp).
 
 `vendor/miniquad` is a patched copy of

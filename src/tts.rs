@@ -1,4 +1,5 @@
-//! Text to speech with Piper, then a deliberately broken-broadcast DSP pass.
+//! Text to speech with Piper or Kokoro, then a deliberately broken-broadcast
+//! DSP pass.
 
 use crate::lipsync::{self, Phone};
 use rand::Rng;
@@ -14,8 +15,26 @@ const MAX_TTS_BYTES: usize = RATE as usize * 2 * 120;
 const MAX_ERR_BYTES: u64 = 4 << 20;
 /// Piper with phoneme timings, run by Piper's own Python.
 const TIMED: &str = include_str!("../tools/piper_timed.py");
+/// Kokoro with phoneme timings, run by the kokoro venv's Python.
+const KOKORO: &str = include_str!("../tools/kokoro_timed.py");
 
-/// A Piper binary, a voice model, and a pitch.
+/// Kokoro instead of Piper: the venv Python, model, voices file and voice.
+#[derive(Clone)]
+pub struct Kokoro {
+    pub python: PathBuf,
+    pub model: PathBuf,
+    pub voices: PathBuf,
+    pub voice: String,
+}
+
+impl Kokoro {
+    /// The files it needs that are missing.
+    pub fn missing(&self) -> Vec<&std::path::Path> {
+        [&self.python, &self.model, &self.voices].into_iter().map(|p| p.as_path()).filter(|p| !p.is_file()).collect()
+    }
+}
+
+/// A Piper binary, a voice model, and a pitch (or Kokoro).
 #[derive(Clone)]
 pub struct Voice {
     pub piper: PathBuf,
@@ -30,6 +49,8 @@ pub struct Voice {
     /// Piper's own Python, to run `tools/piper_timed.py` for phoneme
     /// timings; `None` to go by loudness.
     pub timed: Option<PathBuf>,
+    /// Speak with Kokoro instead of Piper.
+    pub kokoro: Option<Kokoro>,
 }
 
 /// The Python next to the real Piper binary (Piper's uv tool venv), if any.
@@ -55,9 +76,20 @@ pub fn tidy(text: &str) -> String {
         .join(" ")
 }
 
-/// Raw 22.05 kHz mono s16 from Piper, with phoneme timings when the timed
-/// script runs (empty when it can't, so the mouth goes by loudness).
+/// Raw 22.05 kHz mono s16 from Piper or Kokoro, with phoneme timings when
+/// the timed script runs (empty when it can't, so the mouth goes by loudness).
 pub fn synth(voice: &Voice, text: &str) -> Result<(Vec<i16>, Vec<Phone>), String> {
+    if let Some(k) = &voice.kokoro {
+        let mut cmd = Command::new(&k.python);
+        cmd.args(["-I", "-c", KOKORO, "-m"])
+            .arg(&k.model)
+            .arg("--voices")
+            .arg(&k.voices)
+            .args(["--voice", &k.voice, "--lang", if k.voice.starts_with('b') { "en-gb" } else { "en-us" }])
+            .args(["--speed", &(1.0 / voice.pace).to_string()]);
+        let (pcm, err) = run(cmd, text, true)?;
+        return Ok((pcm, parse_align(&err)));
+    }
     if let Some(py) = &voice.timed
         && let Ok(out) = synth_timed(py, voice, text)
     {
@@ -98,7 +130,7 @@ fn run(mut cmd: Command, text: &str, err: bool) -> Result<(Vec<i16>, Vec<u8>), S
         .stdout(Stdio::piped())
         .stderr(if err { Stdio::piped() } else { Stdio::null() })
         .spawn()
-        .map_err(|e| format!("piper: {e}"))?;
+        .map_err(|e| format!("tts: {e}"))?;
     // Read stderr alongside stdout, so neither pipe fills up and stalls it.
     let errs = child.stderr.take().map(|e| {
         std::thread::spawn(move || {
@@ -115,7 +147,7 @@ fn run(mut cmd: Command, text: &str, err: bool) -> Result<(Vec<i16>, Vec<u8>), S
         stdin
             .write_all(tidy(text).as_bytes())
             .and_then(|_| stdin.write_all(b"\n"))
-            .map_err(|e| format!("piper stdin: {e}"))?;
+            .map_err(|e| format!("tts stdin: {e}"))?;
     }
     let mut bytes = Vec::new();
     let read = child
@@ -128,12 +160,12 @@ fn run(mut cmd: Command, text: &str, err: bool) -> Result<(Vec<i16>, Vec<u8>), S
     let _ = child.kill();
     let _ = child.wait();
     let errs = errs.and_then(|h| h.join().ok()).unwrap_or_default();
-    read.map_err(|e| format!("piper stdout: {e}"))?;
+    read.map_err(|e| format!("tts stdout: {e}"))?;
     if bytes.len() < 200 {
-        return Err("piper produced no audio".into());
+        return Err("tts produced no audio".into());
     }
     if err && !status.is_some_and(|s| s.success()) {
-        return Err("timed piper failed".into());
+        return Err("timed tts failed".into());
     }
     Ok((bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect(), errs))
 }

@@ -77,6 +77,32 @@ fn models_dir() -> PathBuf {
     memory::data_dir().join("models")
 }
 
+/// The speech setup for a persona: Piper, or Kokoro from its own venv.
+fn voice(persona: persona::Persona) -> tts::Voice {
+    let piper = config::get().piper.clone();
+    let (model, kokoro) = match persona.speech() {
+        persona::Speech::Piper(file) => (models_dir().join(file), None),
+        persona::Speech::Kokoro(name) => (
+            PathBuf::new(),
+            Some(tts::Kokoro {
+                python: memory::data_dir().join("kokoro/bin/python"),
+                model: models_dir().join("kokoro-v1.0.onnx"),
+                voices: models_dir().join("voices-v1.0.bin"),
+                voice: name.to_string(),
+            }),
+        ),
+    };
+    tts::Voice {
+        timed: tts::timed_python(&piper),
+        piper,
+        model,
+        pitch: persona.pitch(),
+        pace: persona.pace(),
+        retro: persona.retro(),
+        kokoro,
+    }
+}
+
 /// Worker-side handle for speaking and updating what the window shows.
 struct Rex {
     shared: Arc<Mutex<Shared>>,
@@ -176,11 +202,17 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             s.error = e;
         });
     };
-    if !rex.voice.piper.is_file() {
-        return fail(format!("Piper missing: {} (run setup.sh)", rex.voice.piper.display()));
-    }
-    if !rex.voice.model.is_file() {
-        return fail(format!("Voice missing: {} (run setup.sh)", rex.voice.model.display()));
+    if let Some(k) = &rex.voice.kokoro {
+        if let Some(p) = k.missing().first() {
+            return fail(format!("Kokoro missing: {} (run setup.sh)", p.display()));
+        }
+    } else {
+        if !rex.voice.piper.is_file() {
+            return fail(format!("Piper missing: {} (run setup.sh)", rex.voice.piper.display()));
+        }
+        if !rex.voice.model.is_file() {
+            return fail(format!("Voice missing: {} (run setup.sh)", rex.voice.model.display()));
+        }
     }
     let stt = match stt::Stt::new(&models_dir().join("ggml-base.en.bin")) {
         Ok(s) => s,
@@ -731,14 +763,7 @@ async fn run() {
         let rex = Rex {
             shared: shared.clone(),
             cancel: cancel.clone(),
-            voice: tts::Voice {
-                piper: config::get().piper.clone(),
-                model: models_dir().join(config::get().persona.voice_file()),
-                pitch: config::get().persona.pitch(),
-                pace: config::get().persona.pace(),
-                retro: config::get().persona.retro(),
-                timed: tts::timed_python(&config::get().piper),
-            },
+            voice: voice(config::get().persona),
         };
         thread::spawn(move || worker(rex, rx));
     }
