@@ -159,7 +159,7 @@ pub(crate) unsafe fn respond_to_clipboard_request(
     assert!((*event).type_0 == SelectionRequest); // is it really SelectionRequest
 
     let empty_message = String::new();
-    let message = MESSAGE.as_ref().unwrap_or(&empty_message);
+    let message = (*&raw const MESSAGE).as_ref().unwrap_or(&empty_message);
 
     let utf8_string = libx11.extensions.utf8_string;
     let xselectionrequest = (*event).xselectionrequest;
