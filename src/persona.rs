@@ -187,16 +187,32 @@ impl Persona {
         }
     }
 
-    pub fn greetings(self) -> &'static [&'static str] {
-        if self.retro() { GREETINGS } else { MODERN_GREETINGS }
+    /// Canned lines below: `we` picks the set that says "we" instead of "I".
+    pub fn greetings(self, we: bool) -> &'static [&'static str] {
+        match (self.retro(), we) {
+            (true, false) => GREETINGS,
+            (true, true) => WE_GREETINGS,
+            (false, false) => MODERN_GREETINGS,
+            (false, true) => WE_MODERN_GREETINGS,
+        }
     }
 
-    pub fn long_fillers(self) -> &'static [&'static str] {
-        if self.retro() { LONG_FILLERS } else { MODERN_LONG_FILLERS }
+    pub fn long_fillers(self, we: bool) -> &'static [&'static str] {
+        match (self.retro(), we) {
+            (true, false) => LONG_FILLERS,
+            (true, true) => WE_LONG_FILLERS,
+            (false, false) => MODERN_LONG_FILLERS,
+            (false, true) => WE_MODERN_LONG_FILLERS,
+        }
     }
 
-    pub fn errors(self) -> &'static [&'static str] {
-        if self.retro() { ERRORS } else { MODERN_ERRORS }
+    pub fn errors(self, we: bool) -> &'static [&'static str] {
+        match (self.retro(), we) {
+            (true, false) => ERRORS,
+            (true, true) => WE_ERRORS,
+            (false, false) => MODERN_ERRORS,
+            (false, true) => WE_MODERN_ERRORS,
+        }
     }
 }
 
@@ -218,6 +234,8 @@ pub struct Who {
     pub brief: bool,
     /// Actions the user said "always" to, as prompt text.
     pub always: Vec<String>,
+    /// Say "we" instead of "I".
+    pub we: bool,
 }
 
 impl Who {
@@ -234,6 +252,14 @@ impl Who {
         };
         line.replace(", {user}", &user).replace("{name}", &self.name)
     }
+
+    pub fn refusals(&self) -> &'static [&'static str] {
+        if self.we { WE_REFUSALS } else { REFUSALS }
+    }
+
+    pub fn no_key(&self) -> &'static str {
+        if self.we { WE_NO_KEY } else { NO_KEY }
+    }
 }
 
 pub const GREETINGS: &[&str] = &[
@@ -246,6 +272,18 @@ pub const MODERN_GREETINGS: &[&str] = &[
     "Hi, {user}. I'm {name}. Hold the space bar or type whenever you're ready.",
     "Hey, {user}, good to see you. What can I help with?",
     "Hi, {user}. I'm here when you need me.",
+];
+
+pub const WE_GREETINGS: &[&str] = &[
+    "{name}, online. Hold the space bar or type, {user}. We're l-listening.",
+    "Hello again, {user}. Everything seems to be in roughly the right place. Including our face.",
+    "We're here. Hold space or type when you're ready. No rush. We don't have anywhere else to b-be.",
+];
+
+pub const WE_MODERN_GREETINGS: &[&str] = &[
+    "Hi, {user}. We're {name}. Hold the space bar or type whenever you're ready.",
+    "Hey, {user}, good to see you. What can we help with?",
+    "Hi, {user}. We're here when you need us.",
 ];
 
 /// Said when a reply is taking a moment.
@@ -272,6 +310,25 @@ pub const MODERN_LONG_FILLERS: &[&str] = &[
     "Working on it.",
 ];
 
+pub const WE_LONG_FILLERS: &[&str] = &[
+    "Let us think about that.",
+    "Give us a minute to check.",
+    "One moment.",
+    "Let us look into that.",
+    "Give us a s-second.",
+    "Hang on, we're checking.",
+    "Mm. Working on it.",
+];
+
+pub const WE_MODERN_LONG_FILLERS: &[&str] = &[
+    "Let us think about that.",
+    "Give us a moment to check.",
+    "One moment.",
+    "Let us look into that.",
+    "Hang on, we're checking.",
+    "Working on it.",
+];
+
 pub const REFUSALS: &[&str] = &[
     "I'd rather not answer that one, {user}.",
     "That's not something I can help with. Ask me something else.",
@@ -289,6 +346,24 @@ pub const MODERN_ERRORS: &[&str] = &[
 
 pub const NO_KEY: &str =
     "I can't think without an Anthropic key, {user}. Put one in the keyring and try again.";
+
+pub const WE_REFUSALS: &[&str] = &[
+    "We'd rather not answer that one, {user}.",
+    "That's not something we can help with. Ask us something else.",
+];
+
+pub const WE_ERRORS: &[&str] = &[
+    "Something went wrong on our end. Try that again.",
+    "We lost our train of thought. Could you s-say that again?",
+];
+
+pub const WE_MODERN_ERRORS: &[&str] = &[
+    "Something went wrong on our end. Could you try that again?",
+    "Sorry, we lost that. Could you say it again?",
+];
+
+pub const WE_NO_KEY: &str =
+    "We can't think without an Anthropic key, {user}. Put one in the keyring and try again.";
 
 fn local_time() -> String {
     Command::new("/usr/bin/date")
@@ -339,6 +414,20 @@ including this app."
     tools.push(format!(
         "set_brief when {u} asks you to be brief or to give more detail by default."
     ));
+    tools.push(format!(
+        "set_we when {u} asks you to say we instead of I, or I instead of we (speech recognition may write \
+I as eye or aye)."
+    ));
+    let person = if who.we {
+        "- Always refer to yourself in the plural: we, us, our, ours, ourselves. Never use I, me, my, \
+mine or myself for yourself. This overrides your notes and earlier replies.\n\
+- Only set_we changes this. If asked to switch, call set_we before you answer. Agreeing without \
+calling it does nothing: the app goes back to the saved form.\n"
+    } else {
+        "- Refer to yourself in the singular: I, me, my. This overrides your notes and earlier replies.\n\
+- Only set_we changes this. If asked to switch, call set_we before you answer. Agreeing without \
+calling it does nothing: the app goes back to the saved form.\n"
+    };
     let length = if who.brief {
         format!(
             "- Brief mode is on: one short sentence, under 25 words. No small talk, no offers of more help. \
@@ -375,7 +464,7 @@ per reply, and often not at all.
 How you talk:
 - Everything you write is spoken aloud by a speech synthesizer. Use plain spoken English only. \
 No markdown, lists, emoji, stage directions, asterisks, or URLs.
-{length}{style}- Help properly. If {u} asks a real question, give a correct, useful answer first.
+{length}{person}{style}- Help properly. If {u} asks a real question, give a correct, useful answer first.
 - Use your memory notes about {u} when they're relevant, but never invent facts about them. \
 If you don't know something, say so plainly.
 - {uc} talks to you by voice (through speech recognition, so forgive odd transcriptions) \
@@ -439,7 +528,8 @@ pub fn notes_system(who: &Who) -> String {
 {person}. You get the existing notes and a new stretch of conversation. Output the updated \
 notes: plain-text lines starting with \"- \", at most 30 lines. Keep durable facts only: their \
 projects and their status, preferences, people and pets they mention, and anything {name} \
-promised to follow up on. Drop stale or trivial items. Output only the notes."
+promised to follow up on. Drop stale or trivial items. Leave out whether {name} says I or we: \
+the app keeps that setting itself. Output only the notes."
     )
 }
 
@@ -515,6 +605,7 @@ mod tests {
             tools,
             brief: false,
             always: Vec::new(),
+            we: false,
         }
     }
 
@@ -564,6 +655,34 @@ mod tests {
         w.always = vec!["asking Claude Code".into()];
         w.tools.home_assistant = false;
         assert!(!system_prompt(&w, "").contains("yes first"));
+    }
+
+    /// First-person singular words, so the "we" lines can be checked.
+    fn singular(line: &str) -> bool {
+        line.split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .any(|w| matches!(w.to_lowercase().as_str(), "i" | "i'm" | "i'd" | "i'll" | "i've" | "me" | "my" | "mine" | "myself"))
+    }
+
+    #[test]
+    fn we_lines_never_say_i() {
+        let mut w = who(Some("Sam"), ToolSet::default());
+        for p in Persona::ALL {
+            for (i, we) in [(p.greetings(false), p.greetings(true)), (p.long_fillers(false), p.long_fillers(true)), (p.errors(false), p.errors(true))] {
+                assert_eq!(i.len(), we.len());
+                assert!(we.iter().all(|l| !singular(l)), "{we:?}");
+            }
+        }
+        assert_eq!(REFUSALS.len(), WE_REFUSALS.len());
+        assert!(SHORT_FILLERS.iter().all(|l| !singular(l)));
+        w.we = true;
+        assert!(w.refusals().iter().chain([&w.no_key()]).all(|l| !singular(l)));
+        assert_eq!(w.fill(Persona::ModernFemale.greetings(true)[0]), "Hi, Sam. We're Vic. Hold the space bar or type whenever you're ready.");
+        let p = system_prompt(&w, "");
+        assert!(p.contains("Always refer to yourself in the plural") && p.contains("set_we"));
+        w.we = false;
+        assert!(singular(w.no_key()));
+        assert!(system_prompt(&w, "").contains("in the singular: I, me, my"));
+        assert!(singular("I'd rather not") && !singular("In it, we're fine."));
     }
 
     #[test]

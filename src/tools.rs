@@ -120,12 +120,24 @@ as that persona after your reply.",
     })
 }
 
-fn prefs_defs() -> [Value; 2] {
+fn prefs_defs() -> [Value; 3] {
     [
         json!({
             "name": "set_brief",
             "description": "Turn brief mode on or off when the user asks you to be brief, less wordy or \
 shorter, or to give more detail by default. The app remembers it.",
+            "input_schema": {
+                "type": "object",
+                "properties": { "on": { "type": "boolean" } },
+                "required": ["on"]
+            }
+        }),
+        json!({
+            "name": "set_we",
+            "description": "Choose how you refer to yourself. Call it whenever the user asks you to say we \
+or I (speech recognition may write I as eye or aye); just agreeing doesn't change anything. On means \
+we, us and our; off means I, me and my. The app remembers it for every persona and uses it in its \
+built-in lines too.",
             "input_schema": {
                 "type": "object",
                 "properties": { "on": { "type": "boolean" } },
@@ -273,6 +285,11 @@ impl Tools {
         self.prefs.lock().ok().and_then(|p| p.brief()).unwrap_or(self.brief_default)
     }
 
+    /// Whether the persona says "we" instead of "I".
+    pub fn we(&self) -> bool {
+        self.prefs.lock().is_ok_and(|p| p.we())
+    }
+
     /// Actions the user said "always" to, as prompt text.
     pub fn always_labels(&self) -> Vec<String> {
         let Ok(p) = self.prefs.lock() else { return Vec::new() };
@@ -297,8 +314,8 @@ impl Tools {
 
     /// Definitions for the tools that are set up.
     pub fn defs(&self) -> Vec<Value> {
-        let [brief, forget] = prefs_defs();
-        let mut v = vec![switch_def(), brief];
+        let [brief, we, forget] = prefs_defs();
+        let mut v = vec![switch_def(), brief, we];
         if self.claude.is_some() || self.ha.is_some() {
             v.push(forget);
         }
@@ -328,7 +345,7 @@ impl Turn<'_> {
         let set_up = match name {
             "ask_claude_code" => self.tools.claude.is_some(),
             "ha_states" | "ha_call_service" => self.tools.ha.is_some(),
-            "switch_persona" | "set_brief" => true,
+            "switch_persona" | "set_brief" | "set_we" => true,
             "forget_permissions" => self.tools.claude.is_some() || self.tools.ha.is_some(),
             _ => false,
         };
@@ -363,6 +380,7 @@ want to do and ask if that's okay. If they say yes, call this tool again with ex
             "ha_call_service" => self.ha_call(input),
             "switch_persona" => self.switch_to(input),
             "set_brief" => self.set_brief(input),
+            "set_we" => self.set_we(input),
             "forget_permissions" => self.forget(),
             _ => Err(format!("unknown tool {name}")),
         };
@@ -397,6 +415,17 @@ want to do and ask if that's okay. If they say yes, call this tool again with ex
         let on = input["on"].as_bool().ok_or("on must be true or false")?;
         self.tools.prefs.lock().map_err(|_| "prefs lock")?.set_brief(on)?;
         Ok(if on { "Brief mode on. Keep replies to one short sentence." } else { "Brief mode off." }.into())
+    }
+
+    fn set_we(&self, input: &Value) -> Result<String, String> {
+        let on = input["on"].as_bool().ok_or("on must be true or false")?;
+        self.tools.prefs.lock().map_err(|_| "prefs lock")?.set_we(on)?;
+        Ok(if on {
+            "Saved. From now on, refer to yourself as we, us and our, never I, me or my, starting with this reply."
+        } else {
+            "Saved. From now on, refer to yourself as I, me and my, starting with this reply."
+        }
+        .into())
     }
 
     fn forget(&self) -> Result<String, String> {
@@ -649,16 +678,16 @@ mod tests {
         let c = Arc::new(AtomicBool::new(false));
         let none = Tools::new(c.clone(), None, None, Persona::Male, false);
         let names: Vec<_> = none.defs().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
-        assert_eq!(names, ["switch_persona", "set_brief"]);
+        assert_eq!(names, ["switch_persona", "set_brief", "set_we"]);
         let (msg, err) = none.turn("yes").run("ha_states", &json!({"search": ""}));
         assert!(err && msg.contains("not available"));
         let (_, err) = none.turn("yes").run("ask_claude_code", &json!({"task": "x"}));
         assert!(err);
         let ha = Tools::new(c.clone(), None, Some(test_ha()), Persona::Male, false);
         let names: Vec<_> = ha.defs().iter().map(|d| d["name"].as_str().unwrap().to_string()).collect();
-        assert_eq!(names, ["switch_persona", "set_brief", "forget_permissions", "ha_states", "ha_call_service"]);
+        assert_eq!(names, ["switch_persona", "set_brief", "set_we", "forget_permissions", "ha_states", "ha_call_service"]);
         let both = Tools::new(c, Some("/nonexistent/claude".into()), Some(test_ha()), Persona::Male, false);
-        assert_eq!(both.defs().len(), 6);
+        assert_eq!(both.defs().len(), 7);
         for d in both.defs() {
             assert!(!d.to_string().contains("Sam"));
         }
@@ -759,6 +788,21 @@ mod tests {
         assert!(err);
         let (_, err) = tools.turn("x").run("forget_permissions", &json!({}));
         assert!(err, "no gated tools, so nothing to forget");
+    }
+
+    #[test]
+    fn we_by_voice_is_saved() {
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, None, Persona::ModernFemale, false)
+            .with_prefs("we");
+        assert!(!tools.we());
+        let (msg, err) = tools.turn("say we instead of I").run("set_we", &json!({"on": true}));
+        assert!(!err && msg.contains("we, us and our"), "{msg}");
+        assert!(tools.we());
+        let (_, err) = tools.turn("go back to I").run("set_we", &json!({"on": false}));
+        assert!(!err);
+        assert!(!tools.we());
+        let (_, err) = tools.turn("x").run("set_we", &json!({}));
+        assert!(err);
     }
 
     #[test]

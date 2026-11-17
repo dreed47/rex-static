@@ -1,6 +1,7 @@
 //! Choices made by voice that outlast a restart: the actions the user said
-//! "always" to, and brief mode. Kept in `<data>/prefs`, one entry per line:
-//! `always <key>` or `brief yes|no`.
+//! "always" to, brief mode, and whether the persona says "we" or "I". Kept
+//! in `<data>/prefs`, one entry per line: `always <key>`, `brief yes|no` or
+//! `we yes|no`.
 //!
 //! The file decides which actions run without asking, so it's ignored
 //! unless it belongs to you and nobody else can write to it.
@@ -18,6 +19,8 @@ pub struct Prefs {
     always: BTreeSet<String>,
     /// None until the user picks a mode by voice; the config decides then.
     brief: Option<bool>,
+    /// Say "we" instead of "I". Applies to every persona.
+    we: bool,
 }
 
 /// A key worth storing: a tool name or `ha:domain.service`.
@@ -46,6 +49,8 @@ impl Prefs {
                 }
                 Some(("brief", "yes")) => p.brief = Some(true),
                 Some(("brief", "no")) => p.brief = Some(false),
+                Some(("we", "yes")) => p.we = true,
+                Some(("we", "no")) => p.we = false,
                 _ => {}
             }
         }
@@ -82,10 +87,22 @@ impl Prefs {
         self.save()
     }
 
+    pub fn we(&self) -> bool {
+        self.we
+    }
+
+    pub fn set_we(&mut self, on: bool) -> Result<(), String> {
+        self.we = on;
+        self.save()
+    }
+
     fn text(&self) -> String {
         let mut s: String = self.always.iter().map(|k| format!("always {k}\n")).collect();
         if let Some(b) = self.brief {
             s.push_str(if b { "brief yes\n" } else { "brief no\n" });
+        }
+        if self.we {
+            s.push_str("we yes\n");
         }
         s
     }
@@ -137,14 +154,18 @@ mod tests {
         a.grant("ask_claude_code").unwrap();
         a.grant("ha:light.turn_on").unwrap();
         a.set_brief(true).unwrap();
+        a.set_we(true).unwrap();
         assert!(a.grant("bad key\nalways x").is_err());
         let b = Prefs::load(&p);
         assert_eq!(a, b);
-        assert!(b.has("ha:light.turn_on") && b.brief() == Some(true));
+        assert!(b.has("ha:light.turn_on") && b.brief() == Some(true) && b.we());
         let mut b = b;
         b.forget_all().unwrap();
         let c = Prefs::load(&p);
-        assert!(!c.has("ask_claude_code") && c.brief() == Some(true));
+        assert!(!c.has("ask_claude_code") && c.brief() == Some(true) && c.we());
+        let mut c = c;
+        c.set_we(false).unwrap();
+        assert!(!Prefs::load(&p).we());
     }
 
     #[test]
@@ -152,11 +173,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let p = test_path("junk");
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, "always Bad Key\nalways\nbrief maybe\nalways ask_claude_code\n").unwrap();
+        std::fs::write(&p, "always Bad Key\nalways\nbrief maybe\nwe maybe\nalways ask_claude_code\n").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
         let a = Prefs::load(&p);
         assert_eq!(a.always().collect::<Vec<_>>(), ["ask_claude_code"]);
-        assert!(a.brief().is_none());
+        assert!(a.brief().is_none() && !a.we());
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o666)).unwrap();
         assert!(!Prefs::load(&p).has("ask_claude_code"));
     }

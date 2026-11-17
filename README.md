@@ -88,7 +88,9 @@ Asking Claude Code and changing things in Home Assistant need your yes
 first. Answer "yes always" and it stops asking for that: for Claude Code,
 every question; for Home Assistant, that one service (for example
 `light.turn_on`). Say "ask first again" to undo all of them. Say "be brief"
-or "more detail" to change reply length. These choices are saved in
+or "more detail" to change reply length. Say "use we instead of I" (or the
+reverse) to change how every persona refers to itself, built-in lines
+included. These choices are saved in
 `~/.local/share/rex-static/prefs`, which is ignored if others can write to
 it.
 

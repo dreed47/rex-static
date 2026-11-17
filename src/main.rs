@@ -235,16 +235,20 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         tools: tools.set(),
         brief: tools.brief(),
         always: tools.always_labels(),
+        we: tools.we(),
     };
 
     // Pre-render filler lines in the background so they play instantly.
-    // Index 0 holds the short ones, 1 the long ones.
-    let fillers: Arc<Mutex<[Vec<Arc<tts::Clip>>; 2]>> = Arc::default();
+    // Index 0 holds the short ones, 1 the long ones, 2 the long ones that
+    // say "we". Both long sets, so "we" can change mid-session.
+    let fillers: Arc<Mutex<[Vec<Arc<tts::Clip>>; 3]>> = Arc::default();
     {
         let fillers = fillers.clone();
         let voice = rex.voice.clone();
         thread::spawn(move || {
-            for (i, lines) in [persona::SHORT_FILLERS, who.persona.long_fillers()].into_iter().enumerate() {
+            let (first, second) = (who.persona.long_fillers(who.we), who.persona.long_fillers(!who.we));
+            let order = [(0, persona::SHORT_FILLERS), (if who.we { 2 } else { 1 }, first), (if who.we { 1 } else { 2 }, second)];
+            for (i, lines) in order {
                 for line in lines {
                     if let Ok((pcm, phones)) = tts::synth(&voice, line) {
                         let c = Arc::new(tts::glitchify(&pcm, &phones, line, voice.pitch, voice.retro, &mut ::rand::rng()));
@@ -259,7 +263,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
     let mut last_filler = String::new();
 
     rex.cancel.store(false, Ordering::SeqCst);
-    rex.say(&who.fill(&if claude.is_some() { pick(who.persona.greetings()) } else { persona::NO_KEY.to_string() }));
+    rex.say(&who.fill(&if claude.is_some() { pick(who.persona.greetings(who.we)) } else { who.no_key().to_string() }));
     rex.set(|s| s.phase = Phase::Idle);
 
     for job in rx {
@@ -333,7 +337,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         }
         rex.set(|s| s.heard = text.clone());
         let Some(claude) = &claude else {
-            rex.say(&who.fill(persona::NO_KEY));
+            rex.say(&who.fill(who.no_key()));
             rex.set(|s| s.phase = Phase::Idle);
             continue;
         };
@@ -344,6 +348,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         let turns = mem.recent(12).unwrap_or_default();
         who.brief = tools.brief();
         who.always = tools.always_labels();
+        who.we = tools.we();
         let system = persona::system_prompt(&who, &notes);
         let (tx2, rx2) = mpsc::channel();
         let tool_used = Arc::new(AtomicBool::new(false));
@@ -385,7 +390,8 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
                     // One "hmm" at most, then one "let me check" at most.
                     if want > said {
                         let clip = fillers.lock().ok().and_then(|f| {
-                            let pool: Vec<_> = f[want - 1].iter().filter(|c| c.text != last_filler).cloned().collect();
+                            let slot = if want == 2 && tools.we() { 2 } else { want - 1 };
+                            let pool: Vec<_> = f[slot].iter().filter(|c| c.text != last_filler).cloned().collect();
                             pool.choose(&mut ::rand::rng()).cloned()
                         });
                         said = want;
@@ -421,11 +427,11 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
                 }
                 rex.say(&t);
             }
-            Some(Ok(llm::Reply::Refused)) => rex.say(&who.fill(&pick(persona::REFUSALS))),
+            Some(Ok(llm::Reply::Refused)) => rex.say(&who.fill(&pick(who.refusals()))),
             Some(Err(e)) => {
                 eprintln!("rex-static: claude: {e}");
                 rex.set(|s| s.error = e);
-                rex.say(&pick(who.persona.errors()));
+                rex.say(&pick(who.persona.errors(tools.we())));
             }
         }
         if tools.take_switch().is_some() {
