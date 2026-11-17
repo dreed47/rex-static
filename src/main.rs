@@ -683,8 +683,244 @@ fn ask_size((w, h): (i32, i32)) {
     });
 }
 
+/// Gap between a parked window and the bar, or the screen edge.
+const PARK_INSET: i32 = 12;
+/// Hyprland selector for this app's window.
+const REX_WINDOW: &str = "class:^rex-static$";
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+struct Screen {
+    area: Rect,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    focused: bool,
+    workspace: String,
+}
+
+#[derive(Debug, PartialEq)]
+enum FetchPlan {
+    /// Layout unknown. Focus, and leave the position alone.
+    FocusOnly,
+    /// Window overlaps a monitor. Raise it where it is.
+    Raise,
+    /// Window is off every monitor. Park it on this workspace.
+    Park { x: i32, y: i32, workspace: String },
+}
+
+fn intersects(a: Rect, b: Rect) -> bool {
+    a.w > 0
+        && a.h > 0
+        && b.w > 0
+        && b.h > 0
+        && a.x < b.x.saturating_add(b.w)
+        && b.x < a.x.saturating_add(a.w)
+        && a.y < b.y.saturating_add(b.h)
+        && b.y < a.y.saturating_add(a.h)
+}
+
+fn json_i32(v: &serde_json::Value) -> Option<i32> {
+    v.as_i64().and_then(|n| i32::try_from(n).ok())
+}
+
+/// Layout size of a monitor. `width` and `height` from hyprctl are pixels;
+/// positions are in the scaled layout. A 90° or 270° transform swaps the axes.
+fn logical_size(width: f64, height: f64, scale: f64, transform: i32) -> Option<(i32, i32)> {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let (w, h) = if transform % 2 != 0 { (height, width) } else { (width, height) };
+    let px = |n: f64| {
+        let r = (n / scale).round();
+        if r.is_finite() && r >= i32::MIN as f64 && r <= i32::MAX as f64 {
+            Some(r as i32)
+        } else {
+            None
+        }
+    };
+    Some((px(w)?, px(h)?))
+}
+
+/// `reserved` is left, top, right, bottom. A missing or negative side is 0.
+fn reserved_sides(v: &serde_json::Value) -> [i32; 4] {
+    let mut out = [0; 4];
+    let Some(arr) = v.get("reserved").and_then(|r| r.as_array()) else {
+        return out;
+    };
+    for (i, n) in arr.iter().take(4).enumerate() {
+        out[i] = json_i32(n).unwrap_or(0).max(0);
+    }
+    out
+}
+
+fn screens_from(monitors: &serde_json::Value) -> Vec<Screen> {
+    let Some(arr) = monitors.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for m in arr {
+        if m.get("disabled").and_then(|d| d.as_bool()) == Some(true) {
+            continue;
+        }
+        let Some(x) = m.get("x").and_then(json_i32) else { continue };
+        let Some(y) = m.get("y").and_then(json_i32) else { continue };
+        let Some(width) = m.get("width").and_then(|v| v.as_f64()) else { continue };
+        let Some(height) = m.get("height").and_then(|v| v.as_f64()) else { continue };
+        let scale = m.get("scale").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let transform = m.get("transform").and_then(json_i32).unwrap_or(0);
+        let Some((w, h)) = logical_size(width, height, scale, transform) else { continue };
+        if w <= 0 || h <= 0 {
+            continue;
+        }
+        let reserved = reserved_sides(m);
+        let workspace = m
+            .get("activeWorkspace")
+            .and_then(|w| w.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push(Screen {
+            area: Rect { x, y, w, h },
+            left: reserved[0],
+            top: reserved[1],
+            right: reserved[2],
+            bottom: reserved[3],
+            focused: m.get("focused").and_then(|f| f.as_bool()).unwrap_or(false),
+            workspace,
+        });
+    }
+    out
+}
+
+fn rex_rect(clients: &serde_json::Value) -> Option<Rect> {
+    let win = clients
+        .as_array()?
+        .iter()
+        .find(|c| c.get("class").and_then(|v| v.as_str()) == Some("rex-static"))?;
+    let at = win.get("at")?.as_array()?;
+    let size = win.get("size")?.as_array()?;
+    Some(Rect {
+        x: json_i32(at.first()?)?,
+        y: json_i32(at.get(1)?)?,
+        w: json_i32(size.first()?)?,
+        h: json_i32(size.get(1)?)?,
+    })
+}
+
+/// Where a second launch should put the already-open window.
+/// Hyprland's `visible` flag is the wrong check here: after a monitor
+/// layout change the window can stay "visible" on its workspace while its
+/// pixels sit above every screen.
+fn fetch_plan(clients: &str, monitors: &str) -> FetchPlan {
+    let Ok(clients) = serde_json::from_str::<serde_json::Value>(clients) else {
+        return FetchPlan::FocusOnly;
+    };
+    let Ok(monitors) = serde_json::from_str::<serde_json::Value>(monitors) else {
+        return FetchPlan::FocusOnly;
+    };
+    let Some(win) = rex_rect(&clients) else {
+        return FetchPlan::FocusOnly;
+    };
+    let screens = screens_from(&monitors);
+    if screens.is_empty() {
+        return FetchPlan::FocusOnly;
+    }
+    if screens.iter().any(|s| intersects(win, s.area)) {
+        return FetchPlan::Raise;
+    }
+    let screen = screens.iter().find(|s| s.focused).unwrap_or(&screens[0]);
+    let w = if win.w > 0 { win.w } else { DEFAULT_SIZE };
+    let h = if win.h > 0 { win.h } else { DEFAULT_SIZE };
+    FetchPlan::Park {
+        x: park_along(screen.area.x, screen.area.w, screen.left, screen.right, w, true),
+        y: park_along(screen.area.y, screen.area.h, screen.top, screen.bottom, h, false),
+        workspace: screen.workspace.clone(),
+    }
+}
+
+/// Put `win` on the far side (the right edge) or the near side (the top).
+fn park_along(origin: i32, span: i32, near: i32, far: i32, win: i32, far_side: bool) -> i32 {
+    let start = origin.saturating_add(near);
+    let end = origin.saturating_add(span).saturating_sub(far);
+    let room = end.saturating_sub(start).max(0);
+    if win >= room {
+        return start;
+    }
+    let preferred = if far_side {
+        end.saturating_sub(win).saturating_sub(PARK_INSET)
+    } else {
+        start.saturating_add(PARK_INSET)
+    };
+    preferred.clamp(start, end - win)
+}
+
+fn lua_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn fetch_dispatches(plan: &FetchPlan) -> Vec<String> {
+    let mut cmds = Vec::new();
+    if let FetchPlan::Park { x, y, workspace } = plan {
+        if !workspace.is_empty() {
+            cmds.push(format!(
+                "hl.dsp.window.move({{ workspace = \"{}\", window = \"{REX_WINDOW}\" }})",
+                lua_escape(workspace)
+            ));
+        }
+        cmds.push(format!(
+            "hl.dsp.window.move({{ x = {x}, y = {y}, relative = false, window = \"{REX_WINDOW}\" }})"
+        ));
+    }
+    cmds.push(format!("hl.dsp.focus({{ window = \"{REX_WINDOW}\" }})"));
+    cmds
+}
+
+fn hyprctl_dispatch(lua: &str) {
+    let _ = std::process::Command::new("/usr/bin/hyprctl")
+        .args(["dispatch", lua])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+fn hyprctl_json(command: &str) -> Option<String> {
+    let out = std::process::Command::new("/usr/bin/hyprctl").args(["-j", command]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout).ok()
+}
+
+/// Bring the running window forward. Move it only when it is off every screen.
+fn raise_open_window() {
+    let plan = match (hyprctl_json("clients"), hyprctl_json("monitors")) {
+        (Some(clients), Some(monitors)) => fetch_plan(&clients, &monitors),
+        _ => FetchPlan::FocusOnly,
+    };
+    for cmd in fetch_dispatches(&plan) {
+        hyprctl_dispatch(&cmd);
+    }
+}
+
 /// Holds an exclusive lock on a file in the data folder for the life of the
-/// process. A second launch finds it taken, focuses the open window and exits.
+/// process. A second launch finds it taken, brings the open window back and
+/// exits. A window still on a monitor is only raised. One that sits off every
+/// screen is moved to the top-right of the monitor in use.
 fn single_instance() -> Option<std::fs::File> {
     let dir = memory::data_dir();
     let _ = std::fs::create_dir_all(&dir);
@@ -704,11 +940,7 @@ fn single_instance() -> Option<std::fs::File> {
         Ok(()) => Some(file),
         Err(std::fs::TryLockError::WouldBlock) => {
             eprintln!("Rex Static is already running.");
-            let _ = std::process::Command::new("/usr/bin/hyprctl")
-                .args(["dispatch", "focuswindow", "class:^rex-static$"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            raise_open_window();
             std::process::exit(0);
         }
         Err(e) => {
@@ -1216,5 +1448,116 @@ mod tests {
         save_size(250, 260);
         assert_eq!(saved_size(), (250, 260));
         let _ = std::fs::remove_file(size_path());
+    }
+
+    fn rex_at(x: i32, y: i32, w: i32, h: i32) -> String {
+        format!(r#"[{{"class":"rex-static","at":[{x},{y}],"size":[{w},{h}]}}]"#)
+    }
+
+    /// The two screens from the lost-window report. HDMI is the one in use.
+    fn desk() -> String {
+        r#"[
+            {"name":"DP-2","x":1352,"y":1698,"width":3840,"height":2160,"scale":1.6,"transform":0,"reserved":[0,26,0,0],"focused":false,"disabled":false,"activeWorkspace":{"name":"1"}},
+            {"name":"HDMI-A-1","x":3752,"y":1698,"width":3840,"height":2160,"scale":1.6,"transform":0,"reserved":[0,26,0,0],"focused":true,"disabled":false,"activeWorkspace":{"name":"5"}}
+        ]"#
+        .to_string()
+    }
+
+    #[test]
+    fn off_screen_parks_on_the_monitor_in_use() {
+        let plan = fetch_plan(&rex_at(2158, 64, 202, 202), &desk());
+        assert_eq!(plan, FetchPlan::Park { x: 5938, y: 1736, workspace: "5".into() });
+        assert_eq!(
+            fetch_dispatches(&plan),
+            vec![
+                "hl.dsp.window.move({ workspace = \"5\", window = \"class:^rex-static$\" })".to_string(),
+                "hl.dsp.window.move({ x = 5938, y = 1736, relative = false, window = \"class:^rex-static$\" })".to_string(),
+                "hl.dsp.focus({ window = \"class:^rex-static$\" })".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn on_screen_window_is_only_raised() {
+        let plan = fetch_plan(&rex_at(5680, 1760, 202, 202), &desk());
+        assert_eq!(plan, FetchPlan::Raise);
+        assert_eq!(
+            fetch_dispatches(&plan),
+            vec!["hl.dsp.focus({ window = \"class:^rex-static$\" })".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_sliver_on_screen_is_left_alone() {
+        assert_eq!(fetch_plan(&rex_at(6140, 1698, 202, 202), &desk()), FetchPlan::Raise);
+    }
+
+    #[test]
+    fn unknown_layout_only_focuses() {
+        assert_eq!(fetch_plan("nope", &desk()), FetchPlan::FocusOnly);
+        assert_eq!(fetch_plan("[]", &desk()), FetchPlan::FocusOnly);
+        assert_eq!(fetch_plan(&rex_at(0, 0, 10, 10), "[]"), FetchPlan::FocusOnly);
+        assert_eq!(
+            fetch_dispatches(&FetchPlan::FocusOnly),
+            vec!["hl.dsp.focus({ window = \"class:^rex-static$\" })".to_string()]
+        );
+    }
+
+    #[test]
+    fn rotated_monitor_uses_the_swapped_size() {
+        let monitors = r#"[{
+            "x":0,"y":0,"width":100,"height":1000,"scale":1,"transform":1,
+            "reserved":[0,0,0,0],"focused":true,"disabled":false,
+            "activeWorkspace":{"name":"2"}
+        }]"#;
+        // Without the swap this box would be inside a 100x1000 screen.
+        let plan = fetch_plan(&rex_at(50, 500, 10, 10), monitors);
+        assert_eq!(plan, FetchPlan::Park { x: 978, y: 12, workspace: "2".into() });
+    }
+
+    #[test]
+    fn a_window_bigger_than_the_screen_stays_on_it() {
+        let monitors = r#"[{
+            "x":0,"y":0,"width":200,"height":200,"scale":1,"transform":0,
+            "reserved":[0,0,0,0],"focused":true,"disabled":false,
+            "activeWorkspace":{"name":"1"}
+        }]"#;
+        let plan = fetch_plan(&rex_at(-1000, -1000, 500, 500), monitors);
+        assert_eq!(plan, FetchPlan::Park { x: 0, y: 0, workspace: "1".into() });
+    }
+
+    #[test]
+    fn a_quote_in_the_workspace_name_is_escaped() {
+        let monitors = r#"[{
+            "x":0,"y":0,"width":800,"height":600,"scale":1,"transform":0,
+            "reserved":[0,0,0,0],"focused":true,"disabled":false,
+            "activeWorkspace":{"name":"a\"b"}
+        }]"#;
+        let plan = fetch_plan(&rex_at(-40, -40, 20, 20), monitors);
+        assert_eq!(plan, FetchPlan::Park { x: 768, y: 12, workspace: "a\"b".into() });
+        assert_eq!(
+            fetch_dispatches(&plan)[0],
+            "hl.dsp.window.move({ workspace = \"a\\\"b\", window = \"class:^rex-static$\" })"
+        );
+    }
+
+    #[test]
+    fn disabled_monitor_does_not_count_as_on_screen() {
+        let monitors = r#"[
+            {"x":0,"y":0,"width":100,"height":100,"scale":1,"transform":0,"reserved":[0,0,0,0],"focused":false,"disabled":true,"activeWorkspace":{"name":"9"}},
+            {"x":1000,"y":0,"width":100,"height":100,"scale":1,"transform":0,"reserved":[0,0,0,0],"focused":true,"disabled":false,"activeWorkspace":{"name":"2"}}
+        ]"#;
+        let plan = fetch_plan(&rex_at(10, 10, 20, 20), monitors);
+        assert_eq!(plan, FetchPlan::Park { x: 1068, y: 12, workspace: "2".into() });
+    }
+
+    #[test]
+    fn with_no_focused_monitor_the_first_screen_is_used() {
+        let monitors = r#"[
+            {"x":0,"y":0,"width":100,"height":100,"scale":1,"transform":0,"reserved":[0,0,0,0],"focused":false,"disabled":false,"activeWorkspace":{"name":"1"}},
+            {"x":500,"y":0,"width":100,"height":100,"scale":1,"transform":0,"reserved":[0,0,0,0],"focused":false,"disabled":false,"activeWorkspace":{"name":"2"}}
+        ]"#;
+        let plan = fetch_plan(&rex_at(-500, -500, 20, 20), monitors);
+        assert_eq!(plan, FetchPlan::Park { x: 68, y: 12, workspace: "1".into() });
     }
 }
