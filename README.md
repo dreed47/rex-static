@@ -1,7 +1,7 @@
 # Rex Static
 
 A glitchy, slightly plastic digital person who lives in a small window on
-your Linux desktop. Hold the space bar to talk, or type. Answers come from
+your Linux desktop. Hold the space bar (or F1) to talk, or type. Answers come from
 Claude and are spoken with a local voice (Piper or Kokoro).
 
 Four personas:
@@ -180,6 +180,26 @@ windowrule = float, class:^rex-static$
 windowrule = center, class:^rex-static$
 windowrule = pin, class:^rex-static$
 ```
+
+## Talk from any window
+
+Space and F1 only work while the Rex window has focus. To hold F1 from any
+window, bind it in Hyprland. Rex starts listening on `SIGUSR1` and sends on
+`SIGUSR2`. Add this to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind_hold("F1", "Rex: start listening", "/usr/bin/pkill -USR1 -x rex-static", "Rex: stop and send", "/usr/bin/pkill -USR2 -x rex-static")
+```
+
+Or in `hyprland.conf` syntax:
+
+```
+bind = , F1, exec, /usr/bin/pkill -USR1 -x rex-static
+bindrtn = , F1, exec, /usr/bin/pkill -USR2 -x rex-static
+```
+
+Release 0.8.0 or later must be running first; an older Rex quits on these
+signals.
 
 ## Data
 

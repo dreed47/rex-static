@@ -14,6 +14,7 @@ mod mqtt;
 mod patches;
 mod persona;
 mod prefs;
+mod ptt;
 mod stt;
 mod tools;
 mod tts;
@@ -451,7 +452,9 @@ fn restart(listen: bool) {
         Some(s) => PathBuf::from(s),
         None => exe,
     };
+    ptt::ignore();
     let err = std::process::Command::new(&exe).args(restart_args(std::env::args_os().skip(1), listen)).exec();
+    ptt::install();
     eprintln!("rex-static: restart {}: {err}", exe.display());
 }
 
@@ -1078,6 +1081,7 @@ fn single_instance() -> Option<std::fs::File> {
 }
 
 fn main() {
+    ptt::install();
     let _lock = single_instance();
     track_place();
     macroquad::Window::from_config(conf(), run());
@@ -1288,14 +1292,17 @@ async fn run() {
             }
         }
 
-        if is_key_pressed(KeyCode::Space) && typed.is_empty() && rec.is_none() && !matches!(s.phase, Phase::Booting | Phase::Error) {
+        // Space or F1 in the window; F1 anywhere through the compositor binding.
+        let talk_down = (is_key_pressed(KeyCode::Space) && typed.is_empty()) || is_key_pressed(KeyCode::F1) || ptt::pressed();
+        let talk_up = is_key_released(KeyCode::Space) || is_key_released(KeyCode::F1) || ptt::released();
+        if talk_down && rec.is_none() && !matches!(s.phase, Phase::Booting | Phase::Error) {
             cancel.store(true, Ordering::SeqCst);
             match audio::Recorder::start(level.clone()) {
                 Ok(r) => rec = Some(r),
                 Err(e) => eprintln!("rex-static: mic: {e}"),
             }
         }
-        if is_key_released(KeyCode::Space) {
+        if talk_up {
             if let Some(r) = rec.take() {
                 let pcm = r.stop();
                 if pcm.len() >= audio::MIC_RATE as usize * 4 / 10 {
