@@ -18,7 +18,7 @@ command -v cmake >/dev/null || missing+=("cmake (whisper build)")
 command -v clang >/dev/null || missing+=("clang (whisper build)")
 if ((${#missing[@]})); then
   echo "Missing: ${missing[*]}" >&2
-  echo "On Arch: sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang" >&2
+  echo "On Arch: sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang libarchive" >&2
   exit 1
 fi
 

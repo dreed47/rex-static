@@ -7,36 +7,40 @@ Claude and are spoken with a local voice (Piper or Kokoro).
 Four personas:
 
 - **Rex Static** (male) and **Roxy Static** (female): the 80s look, with a
-  CRT screen, glitches and a choppy, stuttering voice.
+  CRT screen, glitches and a choppy, stuttering Piper voice.
 - **Miles** (male) and **Zosia** (female): a modern look, with a natural
-  voice, lip sync from the voice's own sounds, real blinks and glances, and
-  head turns made from turned photos of the same face.
+  Kokoro voice, lip sync from the voice's own sounds, real blinks and
+  glances, and head turns made from turned photos of the same face.
 
 Pick one in the config file, or ask the persona to switch (for example
 "switch to Zosia"). It saves the choice to the config and restarts as the
 other one.
 
-![Rex Static and Roxy Static](docs/screenshot.png)
+| Rex Static | Roxy Static |
+|---|---|
+| ![Rex Static](docs/rex.png) | ![Roxy Static](docs/roxy.png) |
+| **Miles** | **Zosia** |
+| ![Miles](docs/miles.png) | ![Zosia](docs/zosia.png) |
 
 ## Requirements
 
 - Linux with Wayland and PipeWire (`/usr/bin/pw-cat`)
 - `libsecret` (`/usr/bin/secret-tool`) for the API key
-- Rust, `uv`, `curl`, `cmake`, `clang`
+- Rust, `uv`, `curl`, `cmake`, `clang`, `bsdtar` (`libarchive`)
 - An Anthropic API key
 - Optional, for the wake phrase: `vosk-api` (`/usr/lib/libvosk.so`)
 
 On Arch:
 
 ```sh
-sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang
+sudo pacman -S --needed rust uv curl pipewire libsecret cmake clang libarchive
 sudo pacman -S --needed vosk-api   # only for the wake phrase
 ```
 
 ## Set up
 
 1. Run `./setup.sh`. It installs Piper and Kokoro, downloads the voice and
-   speech models (about 600 MB, hash-checked), writes an example config and builds.
+   speech models (about 750 MB, hash-checked), writes an example config and builds.
 2. Store your Anthropic key:
 
    ```sh
@@ -68,7 +72,7 @@ The file is `~/.config/rex-static/config`. See
 | `persona` | `male` (Rex), `female` (Roxy), `modern-male` (Miles) or `modern-female` (Zosia) |
 | `user_name` | Your name, so the persona can use it |
 | `model` | Claude model id (default `claude-haiku-5-5`) |
-| `face` | `auto` (built-in head) or `plastic` |
+| `face` | `auto` (built-in head) or `plastic` (plain mannequin, no photo) |
 | `brief` | `yes` for one-sentence replies (default `no`) |
 | `wake` | `yes` to talk without Space: say "Hey Miles" (default `no`) |
 | `claude_code` | Path to `claude`; turns on the Claude Code tool |
@@ -205,9 +209,10 @@ signals.
 
 ## Data
 
-Everything lives in `~/.local/share/rex-static/`: models, `memory.db`
-(conversation history and notes) and any head images. Tests use a temp
-folder and never touch it.
+Everything lives in `~/.local/share/rex-static/`: the voice and speech
+models, the Kokoro install, `memory.db` (conversation history and notes),
+`prefs`, and the saved window size and place. The head images are built
+into the program. Tests use a temp folder and never touch it.
 
 ## Credits
 
