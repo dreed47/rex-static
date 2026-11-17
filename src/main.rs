@@ -703,7 +703,11 @@ struct Screen {
     right: i32,
     bottom: i32,
     focused: bool,
-    workspace: String,
+    /// Connector name, like `HDMI-A-1`. Hyprland moves windows by this.
+    name: String,
+    /// Make, model and serial. Stays the same when the cable changes port.
+    desc: String,
+    id: i64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -712,8 +716,8 @@ enum FetchPlan {
     FocusOnly,
     /// Window overlaps a monitor. Raise it where it is.
     Raise,
-    /// Window is off every monitor. Park it on this workspace.
-    Park { x: i32, y: i32, workspace: String },
+    /// Window is off every monitor. Park it on this monitor.
+    Park { x: i32, y: i32, monitor: String },
 }
 
 fn intersects(a: Rect, b: Rect) -> bool {
@@ -779,12 +783,7 @@ fn screens_from(monitors: &serde_json::Value) -> Vec<Screen> {
             continue;
         }
         let reserved = reserved_sides(m);
-        let workspace = m
-            .get("activeWorkspace")
-            .and_then(|w| w.get("name"))
-            .and_then(|n| n.as_str())
-            .unwrap_or("")
-            .to_string();
+        let text = |k: &str| m.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
         out.push(Screen {
             area: Rect { x, y, w, h },
             left: reserved[0],
@@ -792,17 +791,23 @@ fn screens_from(monitors: &serde_json::Value) -> Vec<Screen> {
             right: reserved[2],
             bottom: reserved[3],
             focused: m.get("focused").and_then(|f| f.as_bool()).unwrap_or(false),
-            workspace,
+            name: text("name"),
+            desc: text("description"),
+            id: m.get("id").and_then(|v| v.as_i64()).unwrap_or(-1),
         });
     }
     out
 }
 
-fn rex_rect(clients: &serde_json::Value) -> Option<Rect> {
-    let win = clients
+fn rex_client(clients: &serde_json::Value) -> Option<&serde_json::Value> {
+    clients
         .as_array()?
         .iter()
-        .find(|c| c.get("class").and_then(|v| v.as_str()) == Some("rex-static"))?;
+        .find(|c| c.get("class").and_then(|v| v.as_str()) == Some("rex-static"))
+}
+
+fn rex_rect(clients: &serde_json::Value) -> Option<Rect> {
+    let win = rex_client(clients)?;
     let at = win.get("at")?.as_array()?;
     let size = win.get("size")?.as_array()?;
     Some(Rect {
@@ -840,7 +845,7 @@ fn fetch_plan(clients: &str, monitors: &str) -> FetchPlan {
     FetchPlan::Park {
         x: park_along(screen.area.x, screen.area.w, screen.left, screen.right, w, true),
         y: park_along(screen.area.y, screen.area.h, screen.top, screen.bottom, h, false),
-        workspace: screen.workspace.clone(),
+        monitor: screen.name.clone(),
     }
 }
 
@@ -875,19 +880,141 @@ fn lua_escape(s: &str) -> String {
 
 fn fetch_dispatches(plan: &FetchPlan) -> Vec<String> {
     let mut cmds = Vec::new();
-    if let FetchPlan::Park { x, y, workspace } = plan {
-        if !workspace.is_empty() {
-            cmds.push(format!(
-                "hl.dsp.window.move({{ workspace = \"{}\", window = \"{REX_WINDOW}\" }})",
-                lua_escape(workspace)
-            ));
-        }
-        cmds.push(format!(
-            "hl.dsp.window.move({{ x = {x}, y = {y}, relative = false, window = \"{REX_WINDOW}\" }})"
-        ));
+    if let FetchPlan::Park { x, y, monitor } = plan {
+        cmds.extend(place_dispatches(monitor, *x, *y));
     }
     cmds.push(format!("hl.dsp.focus({{ window = \"{REX_WINDOW}\" }})"));
     cmds
+}
+
+/// Move Rex to a monitor, then to a spot on it. Moving by monitor (not by
+/// workspace) keeps a pinned window pinned, and puts it on that monitor's
+/// shown workspace. Moving by position alone leaves it on the old monitor.
+fn place_dispatches(monitor: &str, x: i32, y: i32) -> Vec<String> {
+    let mut cmds = Vec::new();
+    if !monitor.is_empty() {
+        cmds.push(format!(
+            "hl.dsp.window.move({{ monitor = \"{}\", window = \"{REX_WINDOW}\" }})",
+            lua_escape(monitor)
+        ));
+    }
+    cmds.push(format!(
+        "hl.dsp.window.move({{ x = {x}, y = {y}, relative = false, window = \"{REX_WINDOW}\" }})"
+    ));
+    cmds
+}
+
+/// Where Rex sits: which monitor (by description) and how far from its
+/// top-left corner, in layout px.
+#[derive(Debug, Clone, PartialEq)]
+struct Place {
+    dx: i32,
+    dy: i32,
+    desc: String,
+}
+
+fn place_path() -> PathBuf {
+    memory::data_dir().join("window-place")
+}
+
+/// Read "dx dy description". The description may hold spaces.
+fn parse_place(text: &str) -> Option<Place> {
+    let line = text.lines().next()?;
+    let mut it = line.splitn(3, ' ');
+    let dx = it.next()?.parse().ok()?;
+    let dy = it.next()?.parse().ok()?;
+    let desc = it.next()?.trim().to_string();
+    if desc.is_empty() {
+        return None;
+    }
+    Some(Place { dx, dy, desc })
+}
+
+fn saved_place() -> Option<Place> {
+    parse_place(&std::fs::read_to_string(place_path()).ok()?)
+}
+
+fn save_place(p: &Place) {
+    let dir = memory::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let tmp = dir.join("window-place.tmp");
+    let desc = p.desc.replace(['\n', '\r'], " ");
+    if std::fs::write(&tmp, format!("{} {} {desc}\n", p.dx, p.dy)).is_ok() {
+        let _ = std::fs::rename(&tmp, place_path());
+    }
+}
+
+/// Where Rex is now, or None if it is not mapped on a known monitor.
+fn current_place(clients: &str, monitors: &str) -> Option<Place> {
+    let clients = serde_json::from_str::<serde_json::Value>(clients).ok()?;
+    let monitors = serde_json::from_str::<serde_json::Value>(monitors).ok()?;
+    let win = rex_client(&clients)?;
+    if win.get("mapped").and_then(|v| v.as_bool()) == Some(false) {
+        return None;
+    }
+    let rect = rex_rect(&clients)?;
+    let mon = win.get("monitor")?.as_i64()?;
+    let screen = screens_from(&monitors).into_iter().find(|s| s.id == mon)?;
+    if screen.desc.is_empty() || !intersects(rect, screen.area) {
+        return None;
+    }
+    Some(Place { dx: rect.x - screen.area.x, dy: rect.y - screen.area.y, desc: screen.desc })
+}
+
+/// Monitor name and position to put Rex back where it was. None when that
+/// monitor is not connected: the window rule then decides.
+fn restore_plan(place: &Place, clients: &str, monitors: &str) -> Option<(String, i32, i32)> {
+    let monitors = serde_json::from_str::<serde_json::Value>(monitors).ok()?;
+    let screen = screens_from(&monitors).into_iter().find(|s| s.desc == place.desc)?;
+    let (w, h) = serde_json::from_str::<serde_json::Value>(clients)
+        .ok()
+        .and_then(|c| rex_rect(&c))
+        .map(|r| (r.w, r.h))
+        .unwrap_or((DEFAULT_SIZE, DEFAULT_SIZE));
+    // Keep the whole window on the screen, even if the monitor shrank.
+    let fit = |origin: i32, span: i32, off: i32, win: i32| {
+        origin.saturating_add(off.clamp(0, span.saturating_sub(win).max(0)))
+    };
+    Some((
+        screen.name,
+        fit(screen.area.x, screen.area.w, place.dx, w),
+        fit(screen.area.y, screen.area.h, place.dy, h),
+    ))
+}
+
+/// Put Rex back on the monitor and spot it was last left on, then keep
+/// saving where it is, so a drag to another monitor sticks.
+fn track_place() {
+    thread::spawn(|| {
+        // Let the window map and take its saved size first.
+        thread::sleep(Duration::from_millis(800));
+        if let (Some(place), Some(clients), Some(monitors)) =
+            (saved_place(), hyprctl_json("clients"), hyprctl_json("monitors"))
+            && let Some((name, x, y)) = restore_plan(&place, &clients, &monitors)
+        {
+            for cmd in place_dispatches(&name, x, y) {
+                hyprctl_dispatch(&cmd);
+            }
+        }
+        let mut saved = saved_place();
+        let mut seen: Option<Place> = None;
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            let now = match (hyprctl_json("clients"), hyprctl_json("monitors")) {
+                (Some(c), Some(m)) => current_place(&c, &m),
+                _ => None,
+            };
+            // Save only once the spot holds for two checks, not mid-drag.
+            if let Some(p) = &now
+                && now == seen
+                && now != saved
+            {
+                save_place(p);
+                saved = now.clone();
+            }
+            seen = now;
+        }
+    });
 }
 
 fn hyprctl_dispatch(lua: &str) {
@@ -952,6 +1079,7 @@ fn single_instance() -> Option<std::fs::File> {
 
 fn main() {
     let _lock = single_instance();
+    track_place();
     macroquad::Window::from_config(conf(), run());
 }
 
@@ -1457,8 +1585,8 @@ mod tests {
     /// The two screens from the lost-window report. HDMI is the one in use.
     fn desk() -> String {
         r#"[
-            {"name":"DP-2","x":1352,"y":1698,"width":3840,"height":2160,"scale":1.6,"transform":0,"reserved":[0,26,0,0],"focused":false,"disabled":false,"activeWorkspace":{"name":"1"}},
-            {"name":"HDMI-A-1","x":3752,"y":1698,"width":3840,"height":2160,"scale":1.6,"transform":0,"reserved":[0,26,0,0],"focused":true,"disabled":false,"activeWorkspace":{"name":"5"}}
+            {"id":1,"name":"DP-2","description":"Samsung U32R59x","x":1352,"y":1698,"width":3840,"height":2160,"scale":1.6,"transform":0,"reserved":[0,26,0,0],"focused":false,"disabled":false,"activeWorkspace":{"name":"1"}},
+            {"id":0,"name":"HDMI-A-1","description":"Philips PHL 328E1","x":3752,"y":1698,"width":3840,"height":2160,"scale":1.6,"transform":0,"reserved":[0,26,0,0],"focused":true,"disabled":false,"activeWorkspace":{"name":"5"}}
         ]"#
         .to_string()
     }
@@ -1466,11 +1594,11 @@ mod tests {
     #[test]
     fn off_screen_parks_on_the_monitor_in_use() {
         let plan = fetch_plan(&rex_at(2158, 64, 202, 202), &desk());
-        assert_eq!(plan, FetchPlan::Park { x: 5938, y: 1736, workspace: "5".into() });
+        assert_eq!(plan, FetchPlan::Park { x: 5938, y: 1736, monitor: "HDMI-A-1".into() });
         assert_eq!(
             fetch_dispatches(&plan),
             vec![
-                "hl.dsp.window.move({ workspace = \"5\", window = \"class:^rex-static$\" })".to_string(),
+                "hl.dsp.window.move({ monitor = \"HDMI-A-1\", window = \"class:^rex-static$\" })".to_string(),
                 "hl.dsp.window.move({ x = 5938, y = 1736, relative = false, window = \"class:^rex-static$\" })".to_string(),
                 "hl.dsp.focus({ window = \"class:^rex-static$\" })".to_string(),
             ]
@@ -1512,7 +1640,7 @@ mod tests {
         }]"#;
         // Without the swap this box would be inside a 100x1000 screen.
         let plan = fetch_plan(&rex_at(50, 500, 10, 10), monitors);
-        assert_eq!(plan, FetchPlan::Park { x: 978, y: 12, workspace: "2".into() });
+        assert_eq!(plan, FetchPlan::Park { x: 978, y: 12, monitor: "".into() });
     }
 
     #[test]
@@ -1523,7 +1651,7 @@ mod tests {
             "activeWorkspace":{"name":"1"}
         }]"#;
         let plan = fetch_plan(&rex_at(-1000, -1000, 500, 500), monitors);
-        assert_eq!(plan, FetchPlan::Park { x: 0, y: 0, workspace: "1".into() });
+        assert_eq!(plan, FetchPlan::Park { x: 0, y: 0, monitor: "".into() });
     }
 
     #[test]
@@ -1531,13 +1659,13 @@ mod tests {
         let monitors = r#"[{
             "x":0,"y":0,"width":800,"height":600,"scale":1,"transform":0,
             "reserved":[0,0,0,0],"focused":true,"disabled":false,
-            "activeWorkspace":{"name":"a\"b"}
+            "name":"a\"b","activeWorkspace":{"name":"1"}
         }]"#;
         let plan = fetch_plan(&rex_at(-40, -40, 20, 20), monitors);
-        assert_eq!(plan, FetchPlan::Park { x: 768, y: 12, workspace: "a\"b".into() });
+        assert_eq!(plan, FetchPlan::Park { x: 768, y: 12, monitor: "a\"b".into() });
         assert_eq!(
             fetch_dispatches(&plan)[0],
-            "hl.dsp.window.move({ workspace = \"a\\\"b\", window = \"class:^rex-static$\" })"
+            "hl.dsp.window.move({ monitor = \"a\\\"b\", window = \"class:^rex-static$\" })"
         );
     }
 
@@ -1548,7 +1676,7 @@ mod tests {
             {"x":1000,"y":0,"width":100,"height":100,"scale":1,"transform":0,"reserved":[0,0,0,0],"focused":true,"disabled":false,"activeWorkspace":{"name":"2"}}
         ]"#;
         let plan = fetch_plan(&rex_at(10, 10, 20, 20), monitors);
-        assert_eq!(plan, FetchPlan::Park { x: 1068, y: 12, workspace: "2".into() });
+        assert_eq!(plan, FetchPlan::Park { x: 1068, y: 12, monitor: "".into() });
     }
 
     #[test]
@@ -1558,6 +1686,61 @@ mod tests {
             {"x":500,"y":0,"width":100,"height":100,"scale":1,"transform":0,"reserved":[0,0,0,0],"focused":false,"disabled":false,"activeWorkspace":{"name":"2"}}
         ]"#;
         let plan = fetch_plan(&rex_at(-500, -500, 20, 20), monitors);
-        assert_eq!(plan, FetchPlan::Park { x: 68, y: 12, workspace: "1".into() });
+        assert_eq!(plan, FetchPlan::Park { x: 68, y: 12, monitor: "".into() });
+    }
+
+    fn rex_on(x: i32, y: i32, monitor: i32) -> String {
+        format!(r#"[{{"class":"rex-static","mapped":true,"monitor":{monitor},"at":[{x},{y}],"size":[202,202]}}]"#)
+    }
+
+    #[test]
+    fn place_file_is_in_temp_folder() {
+        assert!(place_path().starts_with(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn place_parses_with_spaces_in_the_name() {
+        let p = parse_place("120 -4 Philips PHL 328E1 0x1715\n").unwrap();
+        assert_eq!(p, Place { dx: 120, dy: -4, desc: "Philips PHL 328E1 0x1715".into() });
+        assert_eq!(parse_place("1 2"), None);
+        assert_eq!(parse_place("1 2 "), None);
+        assert_eq!(parse_place("a 2 x"), None);
+        assert_eq!(parse_place(""), None);
+    }
+
+    #[test]
+    fn place_round_trips() {
+        let p = Place { dx: 30, dy: 40, desc: "Samsung U32R59x".into() };
+        save_place(&p);
+        assert_eq!(saved_place(), Some(p));
+        let _ = std::fs::remove_file(place_path());
+    }
+
+    #[test]
+    fn current_place_is_relative_to_its_monitor() {
+        let p = current_place(&rex_on(1452, 1798, 1), &desk()).unwrap();
+        assert_eq!(p, Place { dx: 100, dy: 100, desc: "Samsung U32R59x".into() });
+        // Hidden, or on a monitor that is not listed: nothing to save.
+        let hidden = r#"[{"class":"rex-static","mapped":false,"monitor":1,"at":[1452,1798],"size":[202,202]}]"#;
+        assert_eq!(current_place(hidden, &desk()), None);
+        assert_eq!(current_place(&rex_on(1452, 1798, 7), &desk()), None);
+    }
+
+    #[test]
+    fn restore_goes_to_the_saved_monitor() {
+        let place = Place { dx: 100, dy: 100, desc: "Samsung U32R59x".into() };
+        // Rex opened centred on the Philips; it goes back to the Samsung.
+        let plan = restore_plan(&place, &rex_on(5000, 2400, 0), &desk());
+        assert_eq!(plan, Some(("DP-2".into(), 1452, 1798)));
+        let gone = Place { desc: "Dell".into(), ..place };
+        assert_eq!(restore_plan(&gone, &rex_on(5000, 2400, 0), &desk()), None);
+    }
+
+    #[test]
+    fn restore_keeps_the_window_on_screen() {
+        // DP-2 is 2400 x 1350 in layout px.
+        let place = Place { dx: 9000, dy: -50, desc: "Samsung U32R59x".into() };
+        let plan = restore_plan(&place, &rex_on(5000, 2400, 0), &desk());
+        assert_eq!(plan, Some(("DP-2".into(), 1352 + 2400 - 202, 1698)));
     }
 }

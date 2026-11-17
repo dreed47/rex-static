@@ -160,11 +160,17 @@ their choppy 80s look.
 The window starts at 375 × 375 logical pixels, which is 600 screen pixels
 at a 1.6 monitor scale. Drag it with the left mouse button. Resize it and it
 keeps that size across restarts and persona switches (saved in
-`~/.local/share/rex-static/window-size`). On Hyprland, float it, with no
-`size` in the rule so the saved size wins:
+`~/.local/share/rex-static/window-size`).
+
+On Hyprland, Rex also remembers which monitor you left it on and where, and
+opens there next time (saved in `~/.local/share/rex-static/window-place`).
+If that monitor isn't connected, the window rule places it. Float and pin it,
+with no `size` in the rule so the saved size wins. Pinning keeps Rex on its
+monitor while that monitor switches workspaces; drag it to another monitor
+and it stays there.
 
 ```lua
-o.window({ class = "^rex-static$" }, { float = true, center = true, keep_aspect_ratio = true })
+o.window({ class = "^rex-static$" }, { float = true, center = true, keep_aspect_ratio = true, pin = true })
 ```
 
 Or in `hyprland.conf` syntax:
@@ -172,6 +178,7 @@ Or in `hyprland.conf` syntax:
 ```
 windowrule = float, class:^rex-static$
 windowrule = center, class:^rex-static$
+windowrule = pin, class:^rex-static$
 ```
 
 ## Data
