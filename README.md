@@ -88,10 +88,11 @@ time; nothing leaves the machine until a request is heard.
 
 The app ignores the file if someone else owns it or others can write to it.
 
-Asking Claude Code and changing things in Home Assistant need your yes
-first. Answer "yes always" and it stops asking for that: for Claude Code,
-every question; for Home Assistant, that one service (for example
-`light.turn_on`). Say "ask first again" to undo all of them. Say "be brief"
+Asking Claude Code needs your yes first. In Home Assistant, lights,
+switches, fans, scenes, media and climate change straight away; locks,
+alarms, covers, valves, scripts and automations ask once. Answer "yes
+always" and it stops asking for that: for Claude Code, every question; for
+Home Assistant, that one service (for example `lock.unlock`). Say "ask first again" to undo all of them. Say "be brief"
 or "more detail" to change reply length. Say "use we instead of I" (or the
 reverse) to change how every persona refers to itself, built-in lines
 included. These choices are saved in

@@ -236,6 +236,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         brief: tools.brief(),
         always: tools.always_labels(),
         we: tools.we(),
+        ha_entities: tools.ha_index(),
     };
 
     // Pre-render filler lines in the background so they play instantly.
@@ -349,6 +350,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
         who.brief = tools.brief();
         who.always = tools.always_labels();
         who.we = tools.we();
+        who.ha_entities = tools.ha_index();
         let system = persona::system_prompt(&who, &notes);
         let (tx2, rx2) = mpsc::channel();
         let tool_used = Arc::new(AtomicBool::new(false));
@@ -416,7 +418,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             None => {}
             Some(Ok(llm::Reply::Text(t))) => {
                 let (renamed, t) = persona::take_rename(&t);
-                if let Some(n) = renamed {
+                if let Some(n) = renamed.filter(|n| persona::rename_ok(n, &text)) {
                     match mem.set_setting(key, &n) {
                         Ok(()) => who.name = n,
                         Err(e) => eprintln!("rex-static: memory: {e}"),

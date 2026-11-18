@@ -31,6 +31,18 @@ const CLAUDE_OUT_MAX: usize = 64 * 1024;
 const HA_TIMEOUT: Duration = Duration::from_secs(20);
 const HA_OUT_MAX: usize = 8 * 1024 * 1024;
 
+/// How long the Home Assistant entity list in the prompt stays fresh.
+const INDEX_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+/// Most entity-list text put in the prompt.
+const INDEX_MAX: usize = 12 * 1024;
+/// Domains listed in the prompt, in order: things to control first, then
+/// things to read.
+const INDEX_DOMAINS: &[&str] = &[
+    "light", "switch", "fan", "cover", "lock", "climate", "media_player", "scene", "script",
+    "input_boolean", "vacuum", "valve", "humidifier", "water_heater", "button", "siren",
+    "alarm_control_panel", "binary_sensor", "sensor", "weather", "person",
+];
+
 /// Longest tool result handed back to the model.
 const RESULT_MAX: usize = 6000;
 
@@ -56,7 +68,7 @@ fn claude_def() -> Value {
             "description": "Hand a research task to Claude Code, a coding agent on the user's computer. \
 It can read files under their home folder (code projects, configs, notes) and search the web, but it \
 cannot change anything. Use it for questions about their files, projects or system. It can take up to \
-three minutes. Only call it after the user has said yes to it: propose it first.",
+three minutes. Call it straight away, without asking: the app asks the user itself for a yes.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -84,8 +96,8 @@ switches, sensors, climate, locks, and so on). Read-only, no confirmation needed
         json!({
             "name": "ha_call_service",
             "description": "Control Home Assistant by calling a service, for example light.turn_on or \
-switch.toggle. Look up the exact entity id with ha_states first. Only call it after the user has \
-said yes to this exact action: propose it first.",
+switch.toggle. Use the entity id from the entity list in your instructions, or find it with \
+ha_states. Call it straight away, without asking: the app asks the user itself when a change needs a yes.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -163,8 +175,24 @@ pub fn label(name: &str) -> &'static str {
     }
 }
 
-fn gated(name: &str) -> bool {
-    matches!(name, "ask_claude_code" | "ha_call_service")
+/// Home Assistant domains whose changes need a yes: doors, locks and
+/// alarms, plus scripts and automations, which can do any of those.
+const HA_RISKY: &[&str] = &["lock", "alarm_control_panel", "cover", "valve", "script", "automation"];
+
+/// Whether a call needs the user's yes. Home Assistant changes need one only
+/// when the service or any target entity is in a risky domain (so
+/// homeassistant.turn_on on a cover still asks).
+fn gated(name: &str, input: &Value) -> bool {
+    match name {
+        "ask_claude_code" => true,
+        "ha_call_service" => {
+            let domain = input["domain"].as_str().unwrap_or("");
+            let entities = input["entity_id"].as_str().unwrap_or("");
+            HA_RISKY.contains(&domain)
+                || entities.split(',').any(|e| HA_RISKY.contains(&e.trim().split('.').next().unwrap_or("")))
+        }
+        _ => false,
+    }
 }
 
 /// A plain yes, without a no or a wait mixed in.
@@ -175,7 +203,7 @@ pub fn is_yes(text: &str) -> bool {
         .map(|c| if c.is_alphanumeric() || c == '\'' { c } else { ' ' })
         .collect();
     let words: Vec<&str> = t.split_whitespace().collect();
-    if words.is_empty() || words.len() > 8 {
+    if words.is_empty() || words.len() > 12 {
         return false;
     }
     const NO: &[&str] = &["no", "nope", "not", "don't", "dont", "wait", "stop", "cancel", "never", "hold"];
@@ -185,7 +213,8 @@ pub fn is_yes(text: &str) -> bool {
     let joined = words.join(" ");
     const YES: &[&str] = &[
         "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "affirmative",
-        "do it", "go ahead", "go for it", "please do", "sounds good",
+        "do it", "go ahead", "go for it", "please do", "sounds good", "absolutely", "alright", "all right",
+        "do that", "correct", "please",
     ];
     YES.iter().any(|y| joined == *y || joined.starts_with(&format!("{y} ")))
 }
@@ -205,16 +234,40 @@ pub fn is_always(text: &str) -> bool {
     !words.is_empty() && words.len() <= 8 && words.contains(&"always") && !words.iter().any(|w| NO.contains(w))
 }
 
-/// Whether the call was the one proposed last turn. Claude Code only reads,
-/// so a rephrased task still counts; a Home Assistant change must match
-/// exactly.
-fn same_call(prev: Option<&(String, Value)>, name: &str, input: &Value) -> bool {
-    prev.is_some_and(|(n, i)| n == name && (name == "ask_claude_code" || i == input))
+/// What makes two gated calls the same action. Claude Code only reads, so
+/// any task counts. A Home Assistant change is its service and entities,
+/// in any order; extra data may differ, because the parked call is what
+/// runs.
+fn call_key(name: &str, input: &Value) -> Option<String> {
+    match name {
+        "ask_claude_code" => Some(name.to_string()),
+        "ha_call_service" => {
+            let (d, s) = (input["domain"].as_str()?, input["service"].as_str()?);
+            let mut e: Vec<String> = input["entity_id"]
+                .as_str()?
+                .split(',')
+                .map(|x| x.trim().to_lowercase())
+                .filter(|x| !x.is_empty())
+                .collect();
+            e.sort();
+            e.dedup();
+            Some(format!("{}.{}:{}", d.trim().to_lowercase(), s.trim().to_lowercase(), e.join(",")))
+        }
+        _ => None,
+    }
 }
 
-/// Gate decision for one gated call.
-pub fn allowed(prev: Option<&(String, Value)>, name: &str, input: &Value, user_text: &str) -> bool {
-    same_call(prev, name, input) && (is_yes(user_text) || is_always(user_text))
+/// Gate decision for one gated call: the input to run, if the user just
+/// said yes to a matching call parked last turn. For Home Assistant that
+/// is the parked input, the one the user heard about, not the model's
+/// retyped copy. Claude Code takes the new task, since it only reads.
+pub fn confirmed(prev: &[(String, Value)], name: &str, input: &Value, user_text: &str) -> Option<Value> {
+    if !(is_yes(user_text) || is_always(user_text)) {
+        return None;
+    }
+    let key = call_key(name, input)?;
+    let (_, parked) = prev.iter().find(|(n, i)| n == name && call_key(n, i).as_ref() == Some(&key))?;
+    Some(if name == "ask_claude_code" { input.clone() } else { parked.clone() })
 }
 
 /// What a "yes always" to this call remembers, if anything.
@@ -239,8 +292,8 @@ pub fn grant_label(key: &str) -> String {
 }
 
 pub struct Tools {
-    /// Gated call proposed during the last turn, waiting for a yes.
-    pending: Mutex<Option<(String, Value)>>,
+    /// Gated calls proposed during the last turn, waiting for a yes.
+    pending: Mutex<Vec<(String, Value)>>,
     cancel: Arc<AtomicBool>,
     claude: Option<PathBuf>,
     ha: Option<HaConf>,
@@ -250,12 +303,22 @@ pub struct Tools {
     prefs: Mutex<Prefs>,
     /// Brief mode from the config, until the user picks one by voice.
     brief_default: bool,
+    /// Home Assistant entity list for the prompt, refreshed in the background.
+    index: Arc<Mutex<Index>>,
+}
+
+/// Cached Home Assistant entity list.
+#[derive(Default)]
+struct Index {
+    text: String,
+    fetched: Option<Instant>,
+    busy: bool,
 }
 
 /// Per-turn view: what was pending when the turn began, and what the user said.
 pub struct Turn<'a> {
     tools: &'a Tools,
-    prev: Option<(String, Value)>,
+    prev: Vec<(String, Value)>,
     user_text: String,
 }
 
@@ -268,7 +331,17 @@ impl Tools {
         brief_default: bool,
     ) -> Self {
         let prefs = Mutex::new(Prefs::load(&crate::prefs::path()));
-        Self { pending: Mutex::new(None), cancel, claude, ha, current, switch: Mutex::new(None), prefs, brief_default }
+        Self {
+            pending: Mutex::new(Vec::new()),
+            cancel,
+            claude,
+            ha,
+            current,
+            switch: Mutex::new(None),
+            prefs,
+            brief_default,
+            index: Arc::new(Mutex::new(Index::default())),
+        }
     }
 
     /// Use a prefs file of the test's own, so parallel tests don't share one.
@@ -330,8 +403,37 @@ impl Tools {
 
     /// Start a turn. Whatever was pending is only good for this one turn.
     pub fn turn(&self, user_text: &str) -> Turn<'_> {
-        let prev = self.pending.lock().ok().and_then(|mut p| p.take());
+        let prev = self.pending.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
         Turn { tools: self, prev, user_text: user_text.to_string() }
+    }
+
+    /// Home Assistant entities as prompt text (empty until the first fetch
+    /// lands). Starts a background refresh when the list is missing or old,
+    /// so a slow or down Home Assistant never holds up a reply.
+    pub fn ha_index(&self) -> String {
+        let Some(conf) = self.ha.clone() else { return String::new() };
+        let Ok(mut ix) = self.index.lock() else { return String::new() };
+        let stale = ix.fetched.is_none_or(|t| t.elapsed() > INDEX_MAX_AGE);
+        if stale && !ix.busy {
+            ix.busy = true;
+            let index = self.index.clone();
+            thread::spawn(move || {
+                let r = ha_request(&conf, "/api/states", None, &AtomicBool::new(false));
+                let text = r.ok().and_then(|raw| serde_json::from_slice::<Value>(&raw).ok()).map(|v| format_index(&v));
+                if let Ok(mut ix) = index.lock() {
+                    ix.busy = false;
+                    match text {
+                        Some(t) => {
+                            ix.text = t;
+                            ix.fetched = Some(Instant::now());
+                        }
+                        // Try again next turn, but keep the old list meanwhile.
+                        None => eprintln!("rex-static: can't fetch the Home Assistant entity list"),
+                    }
+                }
+            });
+        }
+        ix.text.clone()
     }
 }
 
@@ -352,20 +454,31 @@ impl Turn<'_> {
         if !set_up {
             return (format!("{name} is not available."), true);
         }
-        if gated(name) {
+        let mut input = input;
+        let yes;
+        if gated(name, input) {
             let key = grant_key(name, input);
             let granted = key.as_ref().is_some_and(|k| self.tools.prefs.lock().is_ok_and(|p| p.has(k)));
-            if !granted && !allowed(self.prev.as_ref(), name, input, &self.user_text) {
-                if let Ok(mut p) = self.tools.pending.lock() {
-                    *p = Some((name.to_string(), input.clone()));
+            if !granted {
+                match confirmed(&self.prev, name, input, &self.user_text) {
+                    Some(v) => {
+                        yes = v;
+                        input = &yes;
+                    }
+                    None => {
+                        if let Ok(mut p) = self.tools.pending.lock() {
+                            p.push((name.to_string(), input.clone()));
+                        }
+                        return (
+                            "Not run yet: the app is holding this call until the user says yes. Tell them in one \
+short sentence exactly what you want to do and ask if that's okay. If they say yes, call this tool again."
+                                .into(),
+                            true,
+                        );
+                    }
                 }
-                return (
-                    "Not run: the user has not confirmed this yet. Tell them in one short sentence what you \
-want to do and ask if that's okay. If they say yes, call this tool again with exactly the same input."
-                        .into(),
-                    true,
-                );
             }
+            let key = grant_key(name, input);
             if !granted && is_always(&self.user_text) {
                 if let (Some(k), Ok(mut p)) = (key, self.tools.prefs.lock()) {
                     if let Err(e) = p.grant(&k) {
@@ -470,40 +583,9 @@ search), then answer with what you found. If you can't find it, say so in one se
         self.ha(path, None)
     }
 
-    /// One HA API request through curl. The token goes in on stdin, never
-    /// on the command line.
     fn ha(&self, path: &str, body: Option<&Value>) -> Result<Vec<u8>, String> {
         let conf = self.tools.ha.as_ref().ok_or("Home Assistant is not set up")?;
-        let token = std::fs::read_to_string(&conf.token_file)
-            .map_err(|_| format!("no Home Assistant token in {}", conf.token_file.display()))?;
-        let token = token.trim();
-        if token.is_empty() || token.contains(['\r', '\n']) {
-            return Err("bad Home Assistant token".into());
-        }
-        let header = format!("Authorization: Bearer {token}\n");
-        let mut cmd = Command::new(CURL);
-        cmd.args(["-q", "-sS", "--proto", "=https"]);
-        if let Some(pin) = &conf.pin {
-            cmd.args(["-k", "--pinnedpubkey", pin]);
-        }
-        cmd.args(["--max-time", &HA_TIMEOUT.as_secs().to_string()])
-            .args(["--max-filesize", &HA_OUT_MAX.to_string()])
-            .args(["-H", "@-", "-w", "\n%{http_code}"]);
-        if let Some(b) = body {
-            cmd.args(["-H", "Content-Type: application/json", "--data-binary", &b.to_string()]);
-        }
-        cmd.arg(format!("{}{path}", conf.url));
-        let (ok, out) = run(cmd, header.as_bytes(), HA_TIMEOUT + Duration::from_secs(5), HA_OUT_MAX, &self.tools.cancel)?;
-        if !ok {
-            return Err("can't reach Home Assistant (network or TLS: bad certificate, or the key no longer matches the pin)".into());
-        }
-        let cut = out.iter().rposition(|&b| b == b'\n').ok_or("bad curl output")?;
-        let code = String::from_utf8_lossy(&out[cut + 1..]).trim().to_string();
-        let body = out[..cut].to_vec();
-        if code != "200" && code != "201" {
-            return Err(format!("Home Assistant said HTTP {code}: {}", clip(&String::from_utf8_lossy(&body), 200)));
-        }
-        Ok(body)
+        ha_request(conf, path, body, &self.tools.cancel)
     }
 
     fn ha_states(&self, input: &Value) -> Result<String, String> {
@@ -542,6 +624,41 @@ search), then answer with what you found. If you can't find it, say so in one se
     }
 }
 
+/// One HA API request through curl. The token goes in on stdin, never on
+/// the command line.
+fn ha_request(conf: &HaConf, path: &str, body: Option<&Value>, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
+    let token = std::fs::read_to_string(&conf.token_file)
+        .map_err(|_| format!("no Home Assistant token in {}", conf.token_file.display()))?;
+    let token = token.trim();
+    if token.is_empty() || token.contains(['\r', '\n']) {
+        return Err("bad Home Assistant token".into());
+    }
+    let header = format!("Authorization: Bearer {token}\n");
+    let mut cmd = Command::new(CURL);
+    cmd.args(["-q", "-sS", "--proto", "=https"]);
+    if let Some(pin) = &conf.pin {
+        cmd.args(["-k", "--pinnedpubkey", pin]);
+    }
+    cmd.args(["--max-time", &HA_TIMEOUT.as_secs().to_string()])
+        .args(["--max-filesize", &HA_OUT_MAX.to_string()])
+        .args(["-H", "@-", "-w", "\n%{http_code}"]);
+    if let Some(b) = body {
+        cmd.args(["-H", "Content-Type: application/json", "--data-binary", &b.to_string()]);
+    }
+    cmd.arg(format!("{}{path}", conf.url));
+    let (ok, out) = run(cmd, header.as_bytes(), HA_TIMEOUT + Duration::from_secs(5), HA_OUT_MAX, cancel)?;
+    if !ok {
+        return Err("can't reach Home Assistant (network or TLS: bad certificate, or the key no longer matches the pin)".into());
+    }
+    let cut = out.iter().rposition(|&b| b == b'\n').ok_or("bad curl output")?;
+    let code = String::from_utf8_lossy(&out[cut + 1..]).trim().to_string();
+    let body = out[..cut].to_vec();
+    if code != "200" && code != "201" {
+        return Err(format!("Home Assistant said HTTP {code}: {}", clip(&String::from_utf8_lossy(&body), 200)));
+    }
+    Ok(body)
+}
+
 fn ident(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
@@ -569,6 +686,46 @@ fn format_list(a: &[Value]) -> String {
     a.iter().take(10).map(state_line).collect::<Vec<_>>().join("\n")
 }
 
+/// Entity ids and names for the prompt, so the persona can call a service
+/// without searching first. No states: those go stale, so reads still use
+/// ha_states. Stops at INDEX_MAX, dropping the read-only domains first.
+pub fn format_index(v: &Value) -> String {
+    let Some(all) = v.as_array() else { return String::new() };
+    let mut out = String::new();
+    for d in INDEX_DOMAINS {
+        let mut lines: Vec<String> = all
+            .iter()
+            .filter_map(|e| {
+                let id = e["entity_id"].as_str()?;
+                if id.split_once('.')?.0 != *d || e["state"] == "unavailable" {
+                    return None;
+                }
+                let name: String = e["attributes"]["friendly_name"].as_str().unwrap_or("").chars().take(60).collect();
+                Some(if name.is_empty() { id.to_string() } else { format!("{id} ({name})") })
+            })
+            .collect();
+        lines.sort();
+        for l in lines {
+            if out.len() + l.len() + 2 > INDEX_MAX {
+                return out;
+            }
+            if !out.is_empty() {
+                out.push_str("; ");
+            }
+            out.push_str(&l);
+        }
+    }
+    out
+}
+
+/// Whether a search word is in the text, forgiving plurals ("lights" finds
+/// "Light", "switches" finds "Switch").
+fn has_word(hay: &str, term: &str) -> bool {
+    hay.contains(term)
+        || (term.len() > 3 && term.ends_with('s') && hay.contains(&term[..term.len() - 1]))
+        || (term.len() > 4 && term.ends_with("es") && hay.contains(&term[..term.len() - 2]))
+}
+
 pub fn format_states(v: &Value, search: &str) -> String {
     let Some(all) = v.as_array() else { return "No states.".into() };
     let terms: Vec<String> = search.to_lowercase().split_whitespace().map(String::from).collect();
@@ -591,7 +748,7 @@ pub fn format_states(v: &Value, search: &str) -> String {
             )
             .to_lowercase()
             .replace('_', " ");
-            terms.iter().all(|t| hay.contains(&t.replace('_', " ")))
+            terms.iter().all(|t| has_word(&hay, &t.replace('_', " ")))
         })
         .collect();
     if hits.is_empty() {
@@ -714,6 +871,9 @@ mod tests {
         for y in ["Yes", "yeah.", "Sure, go ahead", "ok", "Okay!", "do it", "go ahead please", "Yep"] {
             assert!(is_yes(y), "{y}");
         }
+        for y in ["absolutely", "yes please turn on the kitchen lights for me now", "please", "do that"] {
+            assert!(is_yes(y), "{y}");
+        }
         for n in ["no", "yes but wait", "not yet", "don't", "maybe", "", "what lights are on", "okay no", "yes stop"] {
             assert!(!is_yes(n), "{n}");
         }
@@ -722,13 +882,94 @@ mod tests {
     #[test]
     fn gate_needs_same_call_and_yes() {
         let call = json!({"domain": "light", "service": "turn_on", "entity_id": "light.office"});
-        let prev = ("ha_call_service".to_string(), call.clone());
-        assert!(allowed(Some(&prev), "ha_call_service", &call, "yes"));
-        assert!(!allowed(Some(&prev), "ha_call_service", &call, "no"));
-        assert!(!allowed(None, "ha_call_service", &call, "yes"));
+        let prev = vec![("ha_call_service".to_string(), call.clone())];
+        assert_eq!(confirmed(&prev, "ha_call_service", &call, "yes"), Some(call.clone()));
+        assert!(confirmed(&prev, "ha_call_service", &call, "no").is_none());
+        assert!(confirmed(&[], "ha_call_service", &call, "yes").is_none());
         let other = json!({"domain": "lock", "service": "unlock", "entity_id": "lock.front"});
-        assert!(!allowed(Some(&prev), "ha_call_service", &other, "yes"));
-        assert!(!allowed(Some(&prev), "ask_claude_code", &call, "yes"));
+        assert!(confirmed(&prev, "ha_call_service", &other, "yes").is_none());
+        let other_light = json!({"domain": "light", "service": "turn_on", "entity_id": "light.kitchen"});
+        assert!(confirmed(&prev, "ha_call_service", &other_light, "yes").is_none());
+        assert!(confirmed(&prev, "ask_claude_code", &call, "yes").is_none());
+    }
+
+    #[test]
+    fn yes_runs_the_parked_call_not_the_retyped_one() {
+        let parked = json!({"domain": "light", "service": "turn_on", "entity_id": "light.a, light.b",
+            "data": {"brightness_pct": 40}});
+        let prev = vec![
+            ("ha_call_service".to_string(), json!({"domain": "fan", "service": "turn_on", "entity_id": "fan.x"})),
+            ("ha_call_service".to_string(), parked.clone()),
+        ];
+        // Retyped with entities reordered and the data changed or dropped.
+        let retyped = json!({"domain": "light", "service": "turn_on", "entity_id": "light.b,light.a"});
+        assert_eq!(confirmed(&prev, "ha_call_service", &retyped, "yes please"), Some(parked.clone()));
+        let retyped = json!({"domain": "light", "service": "turn_on", "entity_id": "light.a,light.b",
+            "data": {"brightness_pct": 100}});
+        assert_eq!(confirmed(&prev, "ha_call_service", &retyped, "ok"), Some(parked));
+        // Both parked calls can be confirmed by the one yes.
+        let fan = json!({"domain": "fan", "service": "turn_on", "entity_id": "fan.x", "data": {}});
+        assert!(confirmed(&prev, "ha_call_service", &fan, "yes").is_some());
+    }
+
+    #[test]
+    fn one_yes_is_enough() {
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false)
+            .with_prefs("one-yes");
+        let call = json!({"domain": "lock", "service": "unlock", "entity_id": "lock.x"});
+        let (msg, err) = tools.turn("unlock the door").run("ha_call_service", &call);
+        assert!(err && msg.starts_with("Not run"));
+        // The yes passes the gate (then fails at the fake token).
+        let retyped = json!({"domain": "lock", "service": "unlock", "entity_id": "lock.x", "data": {}});
+        let (msg, _) = tools.turn("yes").run("ha_call_service", &retyped);
+        assert!(!msg.starts_with("Not run"), "{msg}");
+        assert!(tools.always_labels().is_empty());
+    }
+
+    #[test]
+    fn only_risky_ha_changes_ask() {
+        let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false)
+            .with_prefs("risky");
+        // Safe: runs straight away (then fails at the fake token, past the gate).
+        for c in [
+            json!({"domain": "light", "service": "turn_on", "entity_id": "light.kitchen"}),
+            json!({"domain": "switch", "service": "toggle", "entity_id": "switch.fan"}),
+            json!({"domain": "scene", "service": "turn_on", "entity_id": "scene.movie"}),
+            json!({"domain": "climate", "service": "set_temperature", "entity_id": "climate.house"}),
+        ] {
+            let (msg, _) = tools.turn("do it").run("ha_call_service", &c);
+            assert!(!msg.starts_with("Not run"), "{c}: {msg}");
+        }
+        // Risky: asks, including through homeassistant.* or a mixed entity list.
+        for c in [
+            json!({"domain": "lock", "service": "unlock", "entity_id": "lock.front"}),
+            json!({"domain": "cover", "service": "open_cover", "entity_id": "cover.garage"}),
+            json!({"domain": "alarm_control_panel", "service": "alarm_disarm", "entity_id": "alarm_control_panel.home"}),
+            json!({"domain": "valve", "service": "open_valve", "entity_id": "valve.water"}),
+            json!({"domain": "script", "service": "turn_on", "entity_id": "script.leave"}),
+            json!({"domain": "automation", "service": "trigger", "entity_id": "automation.x"}),
+            json!({"domain": "homeassistant", "service": "turn_on", "entity_id": "light.a, cover.garage"}),
+        ] {
+            let (msg, err) = tools.turn("do it").run("ha_call_service", &c);
+            assert!(err && msg.starts_with("Not run"), "{c}: {msg}");
+        }
+    }
+
+    #[test]
+    fn index_lists_controls_first_and_skips_unavailable() {
+        let v = json!([
+            {"entity_id": "sensor.office_temp", "state": "21", "attributes": {"friendly_name": "Office Temp"}},
+            {"entity_id": "light.kitchen", "state": "off", "attributes": {"friendly_name": "Kitchen Light"}},
+            {"entity_id": "light.gone", "state": "unavailable", "attributes": {}},
+            {"entity_id": "automation.x", "state": "on", "attributes": {}},
+        ]);
+        assert_eq!(format_index(&v), "light.kitchen (Kitchen Light); sensor.office_temp (Office Temp)");
+        let many: Vec<Value> = (0..2000)
+            .map(|i| json!({"entity_id": format!("sensor.s{i}"), "state": "1", "attributes": {}}))
+            .chain([json!({"entity_id": "light.k", "state": "on", "attributes": {}})])
+            .collect();
+        let ix = format_index(&Value::Array(many));
+        assert!(ix.len() <= INDEX_MAX && ix.starts_with("light.k; "));
     }
 
     #[test]
@@ -744,25 +985,26 @@ mod tests {
 
     #[test]
     fn claude_code_yes_survives_a_rephrased_task() {
-        let prev = ("ask_claude_code".to_string(), json!({"task": "what version is rex"}));
-        assert!(allowed(Some(&prev), "ask_claude_code", &json!({"task": "find the rex version"}), "yes"));
-        assert!(!allowed(Some(&prev), "ask_claude_code", &json!({"task": "x"}), "no"));
+        let prev = vec![("ask_claude_code".to_string(), json!({"task": "what version is rex"}))];
+        let new = json!({"task": "find the rex version"});
+        assert_eq!(confirmed(&prev, "ask_claude_code", &new, "yes"), Some(new));
+        assert!(confirmed(&prev, "ask_claude_code", &json!({"task": "x"}), "no").is_none());
     }
 
     #[test]
     fn always_is_remembered_per_service() {
         let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false)
             .with_prefs("ha-always");
-        let call = json!({"domain": "light", "service": "turn_on", "entity_id": "light.x"});
-        let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
+        let call = json!({"domain": "cover", "service": "open_cover", "entity_id": "cover.x"});
+        let (msg, err) = tools.turn("open the blinds").run("ha_call_service", &call);
         assert!(err && msg.starts_with("Not run"));
         // "always" lets it through (it then fails at the fake token, past the gate) and saves it.
         let (msg, _) = tools.turn("yes always").run("ha_call_service", &call);
         assert!(!msg.starts_with("Not run"), "{msg}");
-        assert_eq!(tools.always_labels(), ["light.turn_on in Home Assistant"]);
-        // Next time no yes is needed, even for another light.
-        let other = json!({"domain": "light", "service": "turn_on", "entity_id": "light.y"});
-        let (msg, _) = tools.turn("turn on the other light").run("ha_call_service", &other);
+        assert_eq!(tools.always_labels(), ["cover.open_cover in Home Assistant"]);
+        // Next time no yes is needed, even for other blinds.
+        let other = json!({"domain": "cover", "service": "open_cover", "entity_id": "cover.y"});
+        let (msg, _) = tools.turn("open the other blinds").run("ha_call_service", &other);
         assert!(!msg.starts_with("Not run"), "{msg}");
         // A different service still asks.
         let lock = json!({"domain": "lock", "service": "unlock", "entity_id": "lock.front"});
@@ -772,7 +1014,7 @@ mod tests {
         let (_, err) = tools.turn("ask first again").run("forget_permissions", &json!({}));
         assert!(!err);
         assert!(tools.always_labels().is_empty());
-        let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
+        let (msg, err) = tools.turn("open the blinds").run("ha_call_service", &call);
         assert!(err && msg.starts_with("Not run"));
     }
 
@@ -808,9 +1050,9 @@ mod tests {
     #[test]
     fn pending_lasts_one_turn() {
         let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false);
-        let call = json!({"domain": "light", "service": "turn_on", "entity_id": "light.x"});
+        let call = json!({"domain": "lock", "service": "unlock", "entity_id": "lock.x"});
         // Turn 1: not confirmed, gets parked. Never reaches the network.
-        let (msg, err) = tools.turn("turn on the light").run("ha_call_service", &call);
+        let (msg, err) = tools.turn("unlock the door").run("ha_call_service", &call);
         assert!(err && msg.starts_with("Not run"));
         // Turn 2: something else said; pending is dropped.
         drop(tools.turn("actually, what time is it"));
@@ -822,7 +1064,7 @@ mod tests {
     #[test]
     fn service_validation_blocks_before_network() {
         let tools = Tools::new(Arc::new(AtomicBool::new(false)), None, Some(test_ha()), Persona::Male, false);
-        let t = Turn { tools: &tools, prev: None, user_text: String::new() };
+        let t = Turn { tools: &tools, prev: Vec::new(), user_text: String::new() };
         let bad = [
             json!({"domain": "hassio", "service": "host_shutdown", "entity_id": "a.b"}),
             json!({"domain": "homeassistant", "service": "restart", "entity_id": "a.b"}),
@@ -850,6 +1092,8 @@ mod tests {
         assert!(format_states(&v, "garage door").contains("closed"));
         assert_eq!(format_states(&v, ""), "cover: 1, light: 1, sensor: 1");
         assert!(format_states(&v, "kitchen").starts_with("No entities"));
+        assert!(format_states(&v, "office lamps").contains("light.office_lamp"));
+        assert!(format_states(&v, "garage doors").contains("cover.garage_door"));
     }
 
     #[test]

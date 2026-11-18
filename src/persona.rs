@@ -236,6 +236,8 @@ pub struct Who {
     pub always: Vec<String>,
     /// Say "we" instead of "I".
     pub we: bool,
+    /// Home Assistant entity ids and names, empty when not known.
+    pub ha_entities: String,
 }
 
 impl Who {
@@ -400,7 +402,14 @@ so call it, then say a one-line goodbye.",
     let mut gated = Vec::new();
     if who.tools.home_assistant {
         tools.push(format!("Home Assistant (ha_states to read, ha_call_service to control) for {u}'s house."));
-        gated.push("changing anything in Home Assistant");
+        if !who.ha_entities.is_empty() {
+            tools.push(format!(
+                "Home Assistant entities (id and name): {}. Use these ids directly. Use ha_states only to \
+read current states, or to find something not listed.",
+                who.ha_entities
+            ));
+        }
+        gated.push("unlocking or locking, alarms, doors and covers, valves, scripts or automations in Home Assistant");
     }
     if who.tools.claude_code {
         tools.push(format!(
@@ -476,11 +485,13 @@ spoken words.
     );
     if !gated.is_empty() {
         s.push_str(&format!(
-            "- {} needs {u}'s yes first. Say in one short sentence exactly what you'll do and ask if \
-that's okay. When they say yes, make that exact call. {} need no yes. A yes with \"always\" in it \
+            "- {} needs {u}'s yes first. Don't ask on your own: make the call straight away, and the app \
+holds it and tells you to ask. Then say in one short sentence exactly what you'll do and ask if that's \
+okay. When they say yes, make the call again. {} need no yes. A yes with \"always\" in it \
 (\"yes always\") also counts, and the app remembers it so you won't need to ask for that again.\n",
             cap(&gated.join(" or ")),
-            if who.tools.home_assistant { "Reading Home Assistant and web search" } else { "Web search and other tools" }
+            if who.tools.home_assistant { "Reading Home Assistant, other Home Assistant changes (lights, \
+switches, fans, scenes, media, climate) and web search" } else { "Web search and other tools" }
         ));
     }
     if !who.always.is_empty() {
@@ -496,8 +507,8 @@ that's okay. When they say yes, make that exact call. {} need no yes. A yes with
     }
     s.push_str(&format!(
         "- Your name is {name}. If {u} clearly gives you a new name, accept it simply and start \
-your reply with the tag <name>New Name</name> holding just the new name. Never write that tag \
-otherwise.\n"
+your reply with the tag <name></name> with the name they gave inside it (for example, told \
+\"call yourself Max\", start with <name>Max</name>). Never write that tag otherwise.\n"
     ));
     s.push_str(&format!(
         "- This app is Rex Static, version {}. Answer questions about its version from this.\n",
@@ -547,6 +558,23 @@ pub fn notes_request(who: &Who, old: &str, convo: &[crate::memory::Turn]) -> Str
 
 /// Pull a `<name>...</name>` rename tag out of a reply.
 /// Returns the cleaned-up new name (if valid) and the reply without the tag.
+/// Whether a rename the model asked for came from the user: the new name
+/// must be in what they just said. Stops a copied example or a made-up
+/// name from sticking.
+pub fn rename_ok(name: &str, user_text: &str) -> bool {
+    let norm = |s: &str| {
+        s.to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let (n, u) = (norm(name), format!(" {} ", norm(user_text)));
+    !n.is_empty() && u.contains(&format!(" {n} "))
+}
+
 pub fn take_rename(reply: &str) -> (Option<String>, String) {
     let (Some(a), Some(b)) = (reply.find("<name>"), reply.find("</name>")) else {
         return (None, reply.to_string());
@@ -606,6 +634,7 @@ mod tests {
             brief: false,
             always: Vec::new(),
             we: false,
+            ha_entities: String::new(),
         }
     }
 
@@ -631,14 +660,23 @@ mod tests {
     }
 
     #[test]
+    fn rename_must_come_from_the_user() {
+        assert!(rename_ok("Max", "call yourself max"));
+        assert!(rename_ok("Mary Jane", "your new name is Mary-Jane."));
+        assert!(!rename_ok("New Name", "turn off the bookcase lights"));
+        assert!(!rename_ok("Max", "maximum brightness please"));
+        assert!(!rename_ok("", "hello"));
+    }
+
+    #[test]
     fn prompt_lists_only_set_up_tools() {
         let none = system_prompt(&who(None, ToolSet::default()), "");
         assert!(!none.contains("Home Assistant") && !none.contains("Claude Code") && !none.contains("yes first"));
         let all = system_prompt(&who(Some("Sam"), ToolSet { claude_code: true, home_assistant: true }), "");
         assert!(all.contains("ha_call_service") && all.contains("ask_claude_code"));
-        assert!(all.contains("- Asking Claude Code or changing anything in Home Assistant needs Sam's yes first."));
+        assert!(all.contains("- Asking Claude Code or unlocking or locking, alarms, doors and covers, valves, scripts or automations in Home Assistant needs Sam's yes first."));
         let ha = system_prompt(&who(None, ToolSet { claude_code: false, home_assistant: true }), "");
-        assert!(ha.contains("- Changing anything in Home Assistant needs the user's yes first."));
+        assert!(ha.contains("- Unlocking or locking, alarms, doors and covers, valves, scripts or automations in Home Assistant needs the user's yes first."));
         assert!(all.contains("forget_permissions") && !none.contains("forget_permissions"));
         assert!(all.contains(env!("CARGO_PKG_VERSION")));
     }
@@ -649,7 +687,7 @@ mod tests {
         w.always = vec!["asking Claude Code".into(), "light.turn_on in Home Assistant".into()];
         w.brief = true;
         let p = system_prompt(&w, "");
-        assert!(p.contains("- Changing anything in Home Assistant needs Sam's yes first."));
+        assert!(p.contains("- Unlocking or locking, alarms, doors and covers, valves, scripts or automations in Home Assistant needs Sam's yes first."));
         assert!(p.contains("do them without asking: asking Claude Code, light.turn_on in Home Assistant."));
         assert!(p.contains("Brief mode is on") && !p.contains("one to three sentences"));
         w.always = vec!["asking Claude Code".into()];
