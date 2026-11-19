@@ -61,10 +61,6 @@ enum Job {
     Wake(Vec<i16>, mpsc::Sender<bool>),
 }
 
-/// Command-line flag: record a request right after the greeting (set when
-/// "Hey <name>" switches persona).
-const LISTEN_FLAG: &str = "--listen";
-
 /// Most characters you can type in one message.
 const TYPE_MAX: usize = 500;
 /// Wait this long in silence before a "hmm".
@@ -287,17 +283,12 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
                 if std::env::var_os("REX_WAKE_DEBUG").is_some() {
                     eprintln!("rex-static: wake: heard {text:?}: {:?}", wake::parse(&text, &names));
                 }
-                match wake::parse(&text, &names) {
+                // Only the active persona answers. Matching every name still
+                // matters: "Hey Rex" must find Rex and be ignored, not come
+                // out as a near miss for Miles.
+                match wake::parse(&text, &names).filter(|w| w.persona == who.persona) {
                     None => {
                         let _ = reply.send(false);
-                        continue;
-                    }
-                    Some(w) if w.persona != who.persona => {
-                        let _ = reply.send(false);
-                        match config::save_persona(w.persona) {
-                            Ok(()) => restart(true),
-                            Err(e) => eprintln!("rex-static: wake: {e}"),
-                        }
                         continue;
                     }
                     Some(w) if w.rest < 2 => {
@@ -437,7 +428,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             }
         }
         if tools.take_switch().is_some() {
-            restart(false);
+            restart();
         }
         rex.set(|s| s.phase = Phase::Idle);
         maybe_update_notes(claude, &notes_busy, &who);
@@ -446,9 +437,8 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
 
 /// Replace this process with a fresh copy of the program, so a new persona
 /// loads from the config. The instance lock is close-on-exec, so it frees
-/// itself and the new copy takes it. `listen`: record a request right
-/// after the greeting.
-fn restart(listen: bool) {
+/// itself and the new copy takes it.
+fn restart() {
     use std::os::unix::process::CommandExt;
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -461,17 +451,9 @@ fn restart(listen: bool) {
         None => exe,
     };
     ptt::ignore();
-    let err = std::process::Command::new(&exe).args(restart_args(std::env::args_os().skip(1), listen)).exec();
+    let err = std::process::Command::new(&exe).args(std::env::args_os().skip(1)).exec();
     ptt::install();
     eprintln!("rex-static: restart {}: {err}", exe.display());
-}
-
-fn restart_args(args: impl Iterator<Item = std::ffi::OsString>, listen: bool) -> Vec<std::ffi::OsString> {
-    let mut out: Vec<_> = args.filter(|a| a != LISTEN_FLAG).collect();
-    if listen {
-        out.push(LISTEN_FLAG.into());
-    }
-    out
 }
 
 const VERT: &str = r#"#version 100
@@ -1110,9 +1092,6 @@ async fn run() {
     let ctl = Arc::new(wake::Ctl::default());
     ctl.mute.store(true, Ordering::Relaxed);
     if config::get().wake {
-        if std::env::args_os().any(|a| a == LISTEN_FLAG) {
-            ctl.arm.store(true, Ordering::Relaxed);
-        }
         let (ctl, level, tx) = (ctl.clone(), level.clone(), tx.clone());
         let model = models_dir().join(wake::MODEL_DIR);
         thread::spawn(move || {
@@ -1564,13 +1543,6 @@ async fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn restart_adds_listen_once() {
-        let os = |v: &[&str]| v.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
-        assert_eq!(super::restart_args(os(&["--listen", "x"]).into_iter(), true), os(&["x", "--listen"]));
-        assert_eq!(super::restart_args(os(&["--listen"]).into_iter(), false), os(&[]));
-    }
 
     #[test]
     fn size_file_is_in_temp_folder() {

@@ -40,9 +40,6 @@ pub struct Ctl {
     pub mute: AtomicBool,
     /// Set by the listener while it records a request.
     pub asking: AtomicBool,
-    /// Set to record a request without a wake phrase first (after a
-    /// persona switch from a wake).
-    pub arm: AtomicBool,
 }
 
 /// What a transcript says, if it starts with a wake phrase.
@@ -286,14 +283,6 @@ pub fn run(
                 continue;
             }
             muted = false;
-            if !asking && ctl.arm.swap(false, Ordering::Relaxed) {
-                clip.clear();
-                verdict = Some({
-                    let (t, r) = mpsc::channel();
-                    let _ = t.send(true);
-                    r
-                });
-            }
             clip.extend_from_slice(&chunk);
             if let Some(r) = &verdict {
                 // Whisper is checking; keep the audio for the request.

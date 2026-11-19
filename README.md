@@ -79,10 +79,11 @@ The file is `~/.config/rex-static/config`. See
 | `ha_url`, `ha_pin`, `ha_token_file` | Turn on the Home Assistant tool |
 | `mqtt_url`, `mqtt_user` | Turn on Home Assistant announcements |
 
-With `wake = yes`, say "Hey" and a persona's name: Rex, Roxy, Miles or
-Zosia, or whatever you renamed them to. Say it alone, wait for the beep,
-then talk; a pause of about a second ends it. Or say it all at once: "Hey
-Miles, what time is it?" Another persona's name switches to them first.
+With `wake = yes`, say "Hey" and the active persona's name (for example
+"Hey Miles", or whatever you renamed them to). Other personas' names are
+ignored; to switch, ask ("switch to Zosia"). Say it alone, wait for the
+beep, then talk; a pause of about a second ends it. Or say it all at once:
+"Hey Miles, what time is it?"
 Space still works. A small offline model (Vosk) listens for "hey" all the
 time; nothing leaves the machine until a request is heard.
 
