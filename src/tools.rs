@@ -173,10 +173,17 @@ it when they ask you to ask first again or to stop doing things without asking."
     ]
 }
 
-fn google_defs() -> [Value; 7] {
+fn google_defs() -> [Value; 8] {
     let time = "RFC 3339 with the UTC offset from your instructions, for example 2026-11-25T14:00:00-06:00, \
 or a plain date like 2026-11-25 for an all-day event (the end date is the day after the last day)";
     [
+        json!({
+            "name": "morning_update",
+            "description": "Gather the user's morning update at any time of day: the weather from \
+their station, today's calendar and important unread mail. Call it when they ask for their morning \
+update, a briefing or a rundown of their day, then speak it as the result says. Read-only.",
+            "input_schema": { "type": "object", "properties": {} }
+        }),
         json!({
             "name": "gmail_search",
             "description": "Search the user's Gmail. Takes Gmail search syntax, for example \
@@ -283,6 +290,7 @@ pub fn label(name: &str) -> &'static str {
         "ha_states" | "ha_call_service" => "Checking Home Assistant...",
         "switch_persona" => "Switching...",
         "gmail_search" | "gmail_read" => "Checking mail...",
+        "morning_update" => "Checking your day...",
         "gmail_draft" => "Writing a draft...",
         "calendar_events" | "calendar_add" | "calendar_update" | "calendar_delete" => "Checking calendar...",
         _ => "Checking...",
@@ -315,13 +323,14 @@ fn gated(name: &str, input: &Value) -> bool {
 fn side_effect(name: &str) -> bool {
     !matches!(
         name,
-        "ha_states" | "gmail_search" | "gmail_read" | "gmail_draft" | "calendar_events" | "forget_permissions"
+        "ha_states" | "gmail_search" | "gmail_read" | "gmail_draft" | "calendar_events" | "morning_update"
+            | "forget_permissions"
     )
 }
 
 /// Tools whose results carry text other people wrote.
 fn taints(name: &str) -> bool {
-    matches!(name, "gmail_search" | "gmail_read" | "calendar_events" | "ask_claude_code")
+    matches!(name, "gmail_search" | "gmail_read" | "calendar_events" | "morning_update" | "ask_claude_code")
 }
 
 /// A plain yes, without a no or a wait mixed in.
@@ -729,7 +738,7 @@ impl Turn<'_> {
         let set_up = match name {
             "ask_claude_code" => self.tools.claude.is_some(),
             "gmail_search" | "gmail_read" | "gmail_draft" | "calendar_events" | "calendar_add"
-            | "calendar_update" | "calendar_delete" => self.tools.google,
+            | "calendar_update" | "calendar_delete" | "morning_update" => self.tools.google,
             "ha_states" | "ha_call_service" => self.tools.ha.is_some(),
             "switch_persona" | "set_brief" | "set_we" => true,
             "forget_permissions" => self.tools.claude.is_some() || self.tools.ha.is_some(),
@@ -808,6 +817,7 @@ Don't ask them, and don't call it again."
             "calendar_add" => self.tools.google().and_then(|g| g.calendar_add(input)),
             "calendar_update" => self.tools.google().and_then(|g| g.calendar_update(input)),
             "calendar_delete" => self.tools.google().and_then(|g| g.calendar_delete(input)),
+            "morning_update" => crate::schedule::brief_now(),
             _ => Err(format!("unknown tool {name}")),
         };
         if taints(name) && r.is_ok() {
@@ -1323,6 +1333,18 @@ mod tests {
             pin: None,
             token_file: PathBuf::from("/nonexistent/rex-test-token"),
         }
+    }
+
+    #[test]
+    fn morning_update_needs_google_and_only_reads() {
+        let c = Arc::new(AtomicBool::new(false));
+        let off = Tools::new(c.clone(), None, None, Persona::Male, false);
+        let (msg, err) = off.turn("morning update").run("morning_update", &json!({}));
+        assert!(err && msg.contains("not available"));
+        let on = Tools::new(c, None, None, Persona::Male, false).with_google(true);
+        assert!(on.defs().iter().any(|d| d["name"] == "morning_update"));
+        assert!(taints("morning_update") && !side_effect("morning_update"));
+        assert!(!gated("morning_update", &json!({})));
     }
 
     #[test]

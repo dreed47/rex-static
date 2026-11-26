@@ -159,7 +159,8 @@ at <https://myaccount.google.com/permissions>.
 
 - **Morning update.** At 8 AM the persona reads the weather, today's
   events and important unread mail. If the computer was asleep at 8, it
-  comes when it wakes, but only before noon, and only once a day.
+  comes when it wakes, but only before noon, and only once a day. Ask for "my morning update" (by voice or typed) to
+  hear it at any time; that doesn't use up the 8 AM one.
   Weather comes from a Tempest station: the token and station from the
   Tempest weather bar plugin's settings in `~/.config/omarchy/shell.json`,
   or the `TEMPEST_TOKEN` and `TEMPEST_STATION_ID` environment variables.
