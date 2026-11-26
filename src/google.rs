@@ -423,16 +423,14 @@ impl Google {
 
     // ---- Gmail ----
 
-    pub fn gmail_search(&self, query: &str, max: u64) -> Result<String, String> {
+    /// Message metadata (From, Subject, Date, labels, snippet) for a search.
+    pub fn gmail_list(&self, query: &str, max: u64) -> Result<Vec<Value>, String> {
         let max = max.clamp(1, 20).to_string();
         let list = self.get(&format!("{GMAIL}/messages"), &[("q", query), ("maxResults", &max)])?;
-        let Some(msgs) = list["messages"].as_array().filter(|m| !m.is_empty()) else {
-            return Ok(format!("No mail matches \"{query}\"."));
-        };
         let mut out = Vec::new();
-        for m in msgs {
+        for m in list["messages"].as_array().into_iter().flatten() {
             let Some(id) = m["id"].as_str().filter(|i| safe_id(i)) else { continue };
-            let v = self.get(
+            out.push(self.get(
                 &format!("{GMAIL}/messages/{id}"),
                 &[
                     ("format", "metadata"),
@@ -440,10 +438,17 @@ impl Google {
                     ("metadataHeaders", "Subject"),
                     ("metadataHeaders", "Date"),
                 ],
-            )?;
-            out.push(summary_line(&v));
+            )?);
         }
-        Ok(format!("{DATA_NOTE}{}", out.join("\n")))
+        Ok(out)
+    }
+
+    pub fn gmail_search(&self, query: &str, max: u64) -> Result<String, String> {
+        let msgs = self.gmail_list(query, max)?;
+        if msgs.is_empty() {
+            return Ok(format!("No mail matches \"{query}\"."));
+        }
+        Ok(format!("{DATA_NOTE}{}", msgs.iter().map(summary_line).collect::<Vec<_>>().join("\n")))
     }
 
     pub fn gmail_read(&self, id: &str) -> Result<String, String> {
@@ -483,7 +488,8 @@ impl Google {
 
     // ---- Calendar ----
 
-    pub fn calendar_events(&self, from: &str, to: &str) -> Result<String, String> {
+    /// Single events (repeats expanded) between two RFC 3339 times, in order.
+    pub fn calendar_list(&self, from: &str, to: &str) -> Result<Vec<Value>, String> {
         let v = self.get(
             CALENDAR,
             &[
@@ -494,9 +500,14 @@ impl Google {
                 ("maxResults", "50"),
             ],
         )?;
-        let Some(items) = v["items"].as_array().filter(|i| !i.is_empty()) else {
+        Ok(v["items"].as_array().cloned().unwrap_or_default())
+    }
+
+    pub fn calendar_events(&self, from: &str, to: &str) -> Result<String, String> {
+        let items = self.calendar_list(from, to)?;
+        if items.is_empty() {
             return Ok("No events in that time.".into());
-        };
+        }
         Ok(format!("{DATA_NOTE}{}", items.iter().map(event_line).collect::<Vec<_>>().join("\n")))
     }
 
@@ -597,12 +608,12 @@ fn event_line(e: &Value) -> String {
     s
 }
 
-fn one_line(s: &str, max: usize) -> String {
+pub(crate) fn one_line(s: &str, max: usize) -> String {
     let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if s.chars().count() <= max { s } else { format!("{}...", s.chars().take(max).collect::<String>()) }
 }
 
-fn header(msg: &Value, name: &str) -> String {
+pub(crate) fn header(msg: &Value, name: &str) -> String {
     msg["payload"]["headers"]
         .as_array()
         .and_then(|h| h.iter().find(|x| x["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(name))))

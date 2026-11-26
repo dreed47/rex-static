@@ -1077,7 +1077,7 @@ fn event_span(e: &Value) -> Option<String> {
 
 /// "2026-11-26" or "2026-11-26T14:30:00-06:00" as (days since 1970, hour
 /// and minute if any). Wall time as written; the offset is ignored.
-fn parse_when(s: &str) -> Option<(i64, Option<(u32, u32)>)> {
+pub(crate) fn parse_when(s: &str) -> Option<(i64, Option<(u32, u32)>)> {
     let b = s.as_bytes();
     if b.len() < 10 || b[4] != b'-' || b[7] != b'-' {
         return None;
@@ -1098,7 +1098,7 @@ fn parse_when(s: &str) -> Option<(i64, Option<(u32, u32)>)> {
     (h < 24 && mi < 60).then_some((days, Some((h, mi))))
 }
 
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+pub(crate) fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -1108,7 +1108,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     era * 146097 + doe - 719468
 }
 
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;
@@ -1121,7 +1121,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 /// "Thursday, November 26".
-fn spoken_day(days: i64) -> String {
+pub(crate) fn spoken_day(days: i64) -> String {
     const WD: [&str; 7] = ["Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"];
     const MO: [&str; 12] = [
         "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -1132,7 +1132,7 @@ fn spoken_day(days: i64) -> String {
 }
 
 /// "2 PM", "2:30 PM", "12 AM".
-fn spoken_clock((h, m): (u32, u32)) -> String {
+pub(crate) fn spoken_clock((h, m): (u32, u32)) -> String {
     let h12 = if h % 12 == 0 { 12 } else { h % 12 };
     let ap = if h < 12 { "AM" } else { "PM" };
     if m == 0 { format!("{h12} {ap}") } else { format!("{h12}:{m:02} {ap}") }

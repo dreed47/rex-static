@@ -31,6 +31,19 @@ persona = male
 # (see README). Calendar changes always ask for a yes.
 # google = no
 
+# Morning update at 8 AM: weather from your Tempest station, today's
+# events and important unread mail. If the computer was asleep at 8, it
+# comes when it wakes, but only before noon. Once a day.
+# morning_update = yes
+
+# Say "In 10 minutes: <event>" before each timed calendar event (all-day
+# events are skipped). Needs google = yes.
+# meeting_alerts = yes
+
+# Say who sent new mail, for these senders only (commas between them).
+# Needs google = yes. Default: none.
+# mail_alert_from = boss@example.com, family@example.org
+
 # Piper program (default ~/.local/bin/piper, from setup.sh)
 # piper = ~/.local/bin/piper
 

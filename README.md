@@ -79,6 +79,9 @@ The file is `~/.config/rex-static/config`. See
 | `ha_url`, `ha_pin`, `ha_token_file` | Turn on the Home Assistant tool |
 | `mqtt_url`, `mqtt_user` | Turn on Home Assistant announcements |
 | `google` | `yes` turns on Gmail and Calendar (see below; default `no`) |
+| `morning_update` | Spoken update at 8 AM (default `yes`; see below) |
+| `meeting_alerts` | Alert 10 minutes before each event (default `yes`, needs `google`) |
+| `mail_alert_from` | Alert for new mail from these addresses (default none, needs `google`) |
 
 With `wake = yes`, say "Hey" and the active persona's name (for example
 "Hey Miles", or whatever you renamed them to). Other personas' names are
@@ -151,6 +154,22 @@ The permissions are read-only Gmail, Gmail drafts (`gmail.compose`, which
 Google also uses for sending, though the app never calls send) and
 Calendar events. To revoke, remove "Rex Static" (or your project's name)
 at <https://myaccount.google.com/permissions>.
+
+## Timed updates
+
+- **Morning update.** At 8 AM the persona reads the weather, today's
+  events and important unread mail. If the computer was asleep at 8, it
+  comes when it wakes, but only before noon, and only once a day.
+  Weather comes from a Tempest station: the token and station from the
+  Tempest weather bar plugin's settings in `~/.config/omarchy/shell.json`,
+  or the `TEMPEST_TOKEN` and `TEMPEST_STATION_ID` environment variables.
+  With no station and no Google, there's nothing to say, so it stays quiet.
+- **Meeting alerts.** "In 10 minutes: Dentist." All-day events are skipped.
+- **Mail alerts.** "New email from Sam: Lunch?" for senders in
+  `mail_alert_from` only, from when the app starts.
+
+Alerts are read out as is and stay out of the chat memory. Mail and event
+text is never treated as instructions.
 
 ## Home Assistant announcements
 

@@ -38,6 +38,12 @@ pub struct Config {
     pub wake: bool,
     /// Gmail and Calendar tools (sign in first with `--google-setup`).
     pub google: bool,
+    /// Spoken morning update from 8 AM (or on wake, before noon).
+    pub morning_update: bool,
+    /// Spoken alert 10 minutes before each timed calendar event.
+    pub meeting_alerts: bool,
+    /// Spoken alert for new mail from these addresses.
+    pub mail_alert_from: Vec<String>,
 }
 
 /// The config, read once on first use.
@@ -170,6 +176,9 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
         brief: false,
         wake: false,
         google: false,
+        morning_update: true,
+        meeting_alerts: true,
+        mail_alert_from: Vec::new(),
     };
     let (mut ha_url, mut ha_pin, mut ha_token) = (None, None, home.join(".config/ha-token"));
     let (mut mqtt_url, mut mqtt_user) = (None, None);
@@ -224,6 +233,24 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
                 "no" => cfg.google = false,
                 _ => bad("use yes or no"),
             },
+            "morning_update" => match value {
+                "yes" => cfg.morning_update = true,
+                "no" => cfg.morning_update = false,
+                _ => bad("use yes or no"),
+            },
+            "meeting_alerts" => match value {
+                "yes" => cfg.meeting_alerts = true,
+                "no" => cfg.meeting_alerts = false,
+                _ => bad("use yes or no"),
+            },
+            "mail_alert_from" => {
+                let list: Vec<&str> = value.split(',').map(str::trim).filter(|a| !a.is_empty()).collect();
+                if list.len() <= 20 && list.iter().all(|a| is_email(a)) {
+                    cfg.mail_alert_from = list.into_iter().map(str::to_ascii_lowercase).collect();
+                } else {
+                    bad("use plain email addresses split by commas, 20 at most");
+                }
+            }
             "claude_code" => match abs_path(value, home) {
                 Some(p) => cfg.claude_code = Some(p),
                 None => bad("needs an absolute path"),
@@ -283,6 +310,17 @@ fn abs_path(v: &str, home: &Path) -> Option<PathBuf> {
 
 /// `host[:port]` after the scheme, with an optional trailing slash
 /// dropped: the host and the port, if one is given.
+/// A plain address, safe to put in a Gmail search.
+fn is_email(a: &str) -> bool {
+    let Some((local, host)) = a.split_once('@') else { return false };
+    a.len() <= 254
+        && !local.is_empty()
+        && local.len() <= 64
+        && local.chars().all(|c| c.is_ascii_alphanumeric() || "._%+-".contains(c))
+        && host.contains('.')
+        && host_port(host).is_some_and(|(h, port)| h == host && port.is_none())
+}
+
 fn host_port(rest: &str) -> Option<(&str, Option<u16>)> {
     let rest = rest.trim_end_matches('/');
     let (host, port) = match rest.split_once(':') {
@@ -388,10 +426,15 @@ ha_pin = sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n\
 ha_token_file = ~/.secret/ha\n\
 mqtt_url = mqtt://broker.local\n\
 mqtt_user = mqtt-user\n\
-google = yes\n";
+google = yes\n\
+morning_update = no\n\
+meeting_alerts = no\n\
+mail_alert_from = Boss@Work.com, a.b+c@x-y.org\n";
         let (c, p) = parse(text, &home());
         assert!(p.is_empty(), "{p:?}");
         assert!(c.google);
+        assert!(!c.morning_update && !c.meeting_alerts);
+        assert_eq!(c.mail_alert_from, ["boss@work.com", "a.b+c@x-y.org"]);
         assert_eq!(c.persona, Persona::Female);
         assert_eq!(c.user_name.as_deref(), Some("Sam O'Neil"));
         assert_eq!(c.model, "claude-sonnet-5-5");
@@ -419,15 +462,30 @@ colour = red\n\
 model = gpt-5\n\
 mqtt_url = tcp://broker\n\
 mqtt_user = two words\n\
-google = maybe\n";
+google = maybe\n\
+morning_update = sometimes\n\
+mail_alert_from = a@b.com, x OR y@z.com\n";
         let (c, p) = parse(text, &home());
-        assert_eq!(p.len(), 12, "{p:?}");
+        assert_eq!(p.len(), 14, "{p:?}");
         assert!(!c.google);
+        assert!(c.morning_update && c.meeting_alerts, "defaults stay");
+        assert!(c.mail_alert_from.is_empty());
         assert!(c.mqtt.is_none());
         assert_eq!(c.model, "claude-haiku-5-5");
         assert_eq!(c.persona, Persona::Male);
         assert!(c.user_name.is_none() && c.claude_code.is_none() && c.ha.is_none());
         assert_eq!(c.piper, PathBuf::from("/home/test/.local/bin/piper"));
+    }
+
+    #[test]
+    fn emails() {
+        for ok in ["a@b.com", "first.last+tag@mail.example.org", "x_y%z@a-b.co"] {
+            assert!(is_email(ok), "{ok}");
+        }
+        for bad in ["", "a", "@b.com", "a@", "a@b", "a@@b.com", "a b@c.com", "a@b.com)", "(a@b.com", "a@b.com:25",
+            "a\"@b.com", "a@-b.com", "a@b.com OR from:x"] {
+            assert!(!is_email(bad), "{bad}");
+        }
     }
 
     #[test]
