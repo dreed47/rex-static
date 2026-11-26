@@ -36,6 +36,8 @@ pub struct Config {
     pub brief: bool,
     /// Listen for "Hey <name>" all the time (needs vosk-api).
     pub wake: bool,
+    /// Gmail and Calendar tools (sign in first with `--google-setup`).
+    pub google: bool,
 }
 
 /// The config, read once on first use.
@@ -167,6 +169,7 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
         mqtt: None,
         brief: false,
         wake: false,
+        google: false,
     };
     let (mut ha_url, mut ha_pin, mut ha_token) = (None, None, home.join(".config/ha-token"));
     let (mut mqtt_url, mut mqtt_user) = (None, None);
@@ -214,6 +217,11 @@ pub fn parse(text: &str, home: &Path) -> (Config, Vec<String>) {
             "wake" => match value {
                 "yes" => cfg.wake = true,
                 "no" => cfg.wake = false,
+                _ => bad("use yes or no"),
+            },
+            "google" => match value {
+                "yes" => cfg.google = true,
+                "no" => cfg.google = false,
                 _ => bad("use yes or no"),
             },
             "claude_code" => match abs_path(value, home) {
@@ -379,9 +387,11 @@ ha_url = https://ha.local:8123/\n\
 ha_pin = sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n\
 ha_token_file = ~/.secret/ha\n\
 mqtt_url = mqtt://broker.local\n\
-mqtt_user = mqtt-user\n";
+mqtt_user = mqtt-user\n\
+google = yes\n";
         let (c, p) = parse(text, &home());
         assert!(p.is_empty(), "{p:?}");
+        assert!(c.google);
         assert_eq!(c.persona, Persona::Female);
         assert_eq!(c.user_name.as_deref(), Some("Sam O'Neil"));
         assert_eq!(c.model, "claude-sonnet-5-5");
@@ -408,9 +418,11 @@ nonsense\n\
 colour = red\n\
 model = gpt-5\n\
 mqtt_url = tcp://broker\n\
-mqtt_user = two words\n";
+mqtt_user = two words\n\
+google = maybe\n";
         let (c, p) = parse(text, &home());
-        assert_eq!(p.len(), 11, "{p:?}");
+        assert_eq!(p.len(), 12, "{p:?}");
+        assert!(!c.google);
         assert!(c.mqtt.is_none());
         assert_eq!(c.model, "claude-haiku-5-5");
         assert_eq!(c.persona, Persona::Male);

@@ -26,6 +26,11 @@ persona = male
 # Space. Needs vosk-api (sudo pacman -S --needed vosk-api).
 # wake = no
 
+# Gmail (read, search, draft; never send) and Google Calendar. Sign in once
+# first: rex-static --google-setup ~/Downloads/client_secret_....json
+# (see README). Calendar changes always ask for a yes.
+# google = no
+
 # Piper program (default ~/.local/bin/piper, from setup.sh)
 # piper = ~/.local/bin/piper
 

@@ -92,16 +92,20 @@ impl Claude {
 
     /// Plain question, no tools (used for the notes rewrite).
     pub fn ask(&self, system: &str, turns: &[Turn], max_tokens: u32) -> Result<Reply, String> {
-        self.converse(system, turns, max_tokens, None, &|_| {})
+        self.converse(system, turns, &[], max_tokens, None, &|_| {})
     }
 
     /// Conversation turn with tools: web search runs on Anthropic's side,
     /// client tools run here through `tools`. `on_tool` gets a short label
-    /// whenever a client tool starts.
+    /// whenever a client tool starts. `prefill` goes after `turns`: tool
+    /// calls the app already ran, with their results.
+    ///
+    /// When a call needs a yes, the turn ends with the app's own question.
     pub fn converse(
         &self,
         system: &str,
         turns: &[Turn],
+        prefill: &[Value],
         max_tokens: u32,
         tools: Option<&crate::tools::Turn>,
         on_tool: &dyn Fn(&str),
@@ -110,7 +114,9 @@ impl Claude {
         if messages.is_empty() {
             return Err("nothing to send".into());
         }
+        messages.extend(prefill.iter().cloned());
         let mut said: Vec<String> = Vec::new();
+        let mut nudged = false;
         for _ in 0..MAX_ROUNDS {
             let mut body = json!({
                 "model": self.model,
@@ -130,6 +136,15 @@ impl Claude {
                 return Ok(Reply::Refused);
             }
             let content = v["content"].as_array().cloned().unwrap_or_default();
+            // Web results are text other people wrote: from here on, actions
+            // in this turn need a fresh yes. Set before this round's own
+            // tool calls run.
+            if let Some(t) = tools {
+                if content.iter().any(|b| b["type"] == "web_search_tool_result") {
+                    t.taint();
+                }
+            }
+            let before = said.len();
             said.extend(texts(&content));
             match v["stop_reason"].as_str() {
                 Some("pause_turn") => {
@@ -149,10 +164,23 @@ impl Claude {
                             "is_error": is_error,
                         }));
                     }
+                    // A held call: the app asks, in its own fixed words.
+                    if let Some(q) = tools.question() {
+                        return Ok(Reply::Text(q));
+                    }
                     messages.push(json!({ "role": "assistant", "content": content }));
                     messages.push(json!({ "role": "user", "content": results }));
                 }
                 other => {
+                    // The model asked for permission in its own words instead
+                    // of making the call: send it back once to make the call.
+                    if tools.is_some() && !nudged && asks_permission(&said[before..].join(" ")) {
+                        nudged = true;
+                        said.truncate(before);
+                        messages.push(json!({ "role": "assistant", "content": content }));
+                        messages.push(json!({ "role": "user", "content": NUDGE }));
+                        continue;
+                    }
                     let text = said.join(" ").trim().to_string();
                     if text.is_empty() {
                         return Err(format!("empty reply (stop_reason {})", other.unwrap_or("?")));
@@ -187,6 +215,28 @@ impl Claude {
     }
 }
 
+/// Sent back when the model asks for a yes itself.
+const NUDGE: &str = "(App note, not from the user: don't ask for permission in words. If that reply asks whether \
+to add, change, move or delete a calendar event, or to do another action that needs a yes, call that tool now: \
+the app holds the call and asks the user itself. Otherwise give the same reply again, word for word.)";
+
+/// Whether a reply asks the user's permission for an action.
+fn asks_permission(text: &str) -> bool {
+    let t = text.to_lowercase();
+    if !t.trim_end().ends_with('?') {
+        return false;
+    }
+    const ASK: &[&str] = &[
+        "shall i", "should i", "is that okay", "is that ok", "want me to", "would you like me to", "go ahead",
+        "proceed", "sound good", "okay to", "ok to", "confirm",
+    ];
+    const ACT: &[&str] = &[
+        "add", "delete", "remove", "move", "change", "reschedule", "cancel", "put", "remind", "unlock", "lock",
+        "open", "close", "turn on", "turn off", "claude code", "calendar", "schedule", "book",
+    ];
+    ASK.iter().any(|a| t.contains(a)) && ACT.iter().any(|a| t.contains(a))
+}
+
 /// Text blocks of one response, trimmed, empties dropped.
 fn texts(content: &[Value]) -> Vec<String> {
     content
@@ -204,6 +254,14 @@ mod tests {
 
     fn t(role: &str, text: &str) -> Turn {
         Turn { role: role.into(), text: text.into() }
+    }
+
+    #[test]
+    fn permission_asks() {
+        assert!(asks_permission("I'll add \"Lunch\" on Thursday at noon. Shall I go ahead?"));
+        assert!(asks_permission("Want me to delete it?"));
+        assert!(!asks_permission("Want me to tell you a joke?"));
+        assert!(!asks_permission("I added it. Should I remind you? No, wait. Done."));
     }
 
     #[test]

@@ -78,6 +78,7 @@ The file is `~/.config/rex-static/config`. See
 | `claude_code` | Path to `claude`; turns on the Claude Code tool |
 | `ha_url`, `ha_pin`, `ha_token_file` | Turn on the Home Assistant tool |
 | `mqtt_url`, `mqtt_user` | Turn on Home Assistant announcements |
+| `google` | `yes` turns on Gmail and Calendar (see below; default `no`) |
 
 With `wake = yes`, say "Hey" and the active persona's name (for example
 "Hey Miles", or whatever you renamed them to). Other personas' names are
@@ -108,6 +109,48 @@ needed. Haiku is fast and cheap. Sonnet and Opus give better answers but are
 slower and cost more. A value that isn't a `claude-...` id is ignored with a
 warning, and the default is used. Newer models get the newer web search tool
 automatically.
+
+## Gmail and Calendar
+
+With `google = yes`, the persona can search and read your Gmail, save
+draft replies, and read and change your primary Google Calendar. It never
+sends mail: a draft waits in Gmail's Drafts folder for you to send.
+Adding, moving or deleting an event always asks for a yes, and "always"
+doesn't stick for those.
+
+Mail, events and web pages are written by other people. After the persona
+reads any of them in a turn, every other action in that turn (lights,
+calendar changes, settings) waits for your yes, even ones you said
+"always" to.
+
+The app talks to Google directly with your own OAuth client. Set it up
+once:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create
+   a project.
+2. Enable the **Gmail API** and the **Google Calendar API** for it.
+3. Under **Google Auth Platform**, set up the consent screen: type
+   External, your own address as a test user. Then **Publish app** so its
+   status is **In production**. While it says "Testing", Google ends the
+   sign-in after 7 days. You don't need Google's verification; you'll see
+   an "unverified app" warning once when you sign in.
+4. Under **Clients**, create an OAuth client of type **Desktop app** and
+   download its JSON file.
+5. Run:
+
+   ```sh
+   rex-static --google-setup ~/Downloads/client_secret_XXXX.json
+   ```
+
+   A browser opens. Sign in, accept the warning, and allow all three
+   permissions. The client and the sign-in token go to your keyring
+   (`secret-tool`, service `rex-static`); you can delete the JSON file.
+6. Add `google = yes` to the config and restart Rex Static.
+
+The permissions are read-only Gmail, Gmail drafts (`gmail.compose`, which
+Google also uses for sending, though the app never calls send) and
+Calendar events. To revoke, remove "Rex Static" (or your project's name)
+at <https://myaccount.google.com/permissions>.
 
 ## Home Assistant announcements
 

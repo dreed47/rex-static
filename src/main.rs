@@ -5,6 +5,7 @@
 mod audio;
 mod config;
 mod face;
+mod google;
 mod head;
 mod lipsync;
 mod llm;
@@ -221,7 +222,7 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
     };
     let claude = llm::load_key().map(|k| llm::Claude::new(k, config::get().model.clone()));
     let cfg = config::get();
-    let tools = Arc::new(tools::Tools::new(rex.cancel.clone(), cfg.claude_code.clone(), cfg.ha.clone(), cfg.persona, cfg.brief));
+    let tools = Arc::new(tools::Tools::new(rex.cancel.clone(), cfg.claude_code.clone(), cfg.ha.clone(), cfg.persona, cfg.brief).with_google(cfg.google));
     let notes_busy = Arc::new(AtomicBool::new(false));
     let key = cfg.persona.name_key();
     let mut who = persona::Who {
@@ -352,7 +353,6 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
             let shared = rex.shared.clone();
             let said = text.clone();
             thread::spawn(move || {
-                let turn = tools.turn(&said);
                 let on_tool = |label: &str| {
                     tool_used.store(true, Ordering::Relaxed);
                     if let Ok(mut s) = shared.lock() {
@@ -360,7 +360,31 @@ fn worker(rex: Rex, rx: mpsc::Receiver<Job>) {
                         s.caption = label.to_string();
                     }
                 };
-                let _ = tx2.send(c.converse(&system, &turns, 2000, Some(&turn), &on_tool));
+                // A reply to the app's own question: a yes runs the held
+                // calls here, with no model round.
+                let mut prefill = Vec::new();
+                match tools.answer(&said, &on_tool) {
+                    tools::Answer::No => {
+                        let we = if tools.we() { "we" } else { "I" };
+                        let _ = tx2.send(Ok(llm::Reply::Text(format!("Okay, {we} won't."))));
+                        return;
+                    }
+                    tools::Answer::Ran(ran) => match tools::Answer::reply(&ran) {
+                        Some(r) => {
+                            let _ = tx2.send(Ok(llm::Reply::Text(r)));
+                            return;
+                        }
+                        None => prefill = tools::Answer::messages(&ran),
+                    },
+                    tools::Answer::Nothing | tools::Answer::Other => {}
+                }
+                let turn = tools.turn(&said);
+                if !prefill.is_empty() {
+                    // Claude Code's findings came in: treat them as text
+                    // other people wrote.
+                    turn.taint();
+                }
+                let _ = tx2.send(c.converse(&system, &turns, &prefill, 2000, Some(&turn), &on_tool));
             });
         }
         // Fast replies get no filler. A slowish one gets a "hmm"; a slow
@@ -1071,6 +1095,22 @@ fn single_instance() -> Option<std::fs::File> {
 }
 
 fn main() {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--google-setup") {
+        let Some(file) = args.get(1) else {
+            eprintln!("usage: rex-static --google-setup <client.json>");
+            std::process::exit(2);
+        };
+        let Some(file) = file.to_str() else {
+            eprintln!("rex-static: the file path isn't valid text");
+            std::process::exit(2);
+        };
+        if let Err(e) = google::setup(file) {
+            eprintln!("rex-static: Google sign-in failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     ptt::install();
     let _lock = single_instance();
     track_place();
